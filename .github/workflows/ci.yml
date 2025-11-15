@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      
+    strategy:
+      fail-fast: true
+    
+    name: "Build & Test"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      # ---------- Canonical environment: Node 24 + pnpm ----------
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+        with:
+          version: 10.20.0
+
+      - name: Setup Node 25
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version: "25.1.0"
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: "1.3.2"
+
+      - name: Enable Corepack / pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.20.0 --activate
+          pnpm -v
+
+      - name: Install deps (deterministic)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Clean artifacts
+        run: pnpm run clean
+
+      - name: Build
+        run: pnpm run build
+      
+      - name: Test (Release builds)
+        run: pnpm run test
