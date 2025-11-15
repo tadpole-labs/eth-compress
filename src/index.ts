@@ -7,7 +7,7 @@ export type PayloadTransform = (payload: unknown) => unknown;
 /**
  * Fetch-compatible function that applies HTTP compression (gzip/deflate) to requests.
  * Optionally transforms request payloads before sending.
- * 
+ *
  * @param input - The resource URL, Request object, or URL string
  * @param init - Optional request initialization options
  * @param transformPayload - Optional function to transform the request payload
@@ -81,11 +81,11 @@ export async function compressModule(
 /**
  * Combines HTTP compression with EVM JIT compression.
  * Just pass this as `fetchFn` to viem's http transport.
- * 
+ *
  * @param input - The resource URL or Request object
  * @param init - Optional request initialization options
  * @returns A Promise that resolves to the Response
- * 
+ *
  * @example
  * ```ts
  * const client = createPublicClient({
@@ -95,8 +95,11 @@ export async function compressModule(
  * @pure
  */
 //! @__PURE__
-export const compressModuleWithJIT = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+export const compressModuleWithJIT = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
   return import('./jit-compressor').then(({ compress_call }) =>
-    compressModule(input, init, compress_call)
+    compressModule(input, init, compress_call),
   );
 };

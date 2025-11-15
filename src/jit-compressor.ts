@@ -4,6 +4,24 @@ const MAX_160_BIT = (1n << 160n) - 1n;
 
 const _normHex = (hex: string): string => hex.replace(/^0x/, '').toLowerCase();
 
+const _hexToUint8Array = (hex: string): Uint8Array => {
+  const normalized = _normHex(hex);
+  const len = normalized.length;
+  const bytes = new Uint8Array(len / 2);
+  for (let i = 0; i < len; i += 2) {
+    bytes[i / 2] = Number.parseInt(normalized.slice(i, i + 2), 16);
+  }
+  return bytes;
+};
+
+const _uint8ArrayToHex = (bytes: Uint8Array): string => {
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+};
+
 /**
  * Generates FastLZ (LZ77) decompressor bytecode. The generated code decompresses incoming calldata and forwards it to the target address.
  * @param address - Target contract address
@@ -36,7 +54,7 @@ export const jitBytecode = function (calldata: string): string {
 
 const _jitDecompressor = function (calldata: string): string {
   const hex = _normHex(calldata);
-  const buf = Buffer.from(hex, 'hex');
+  const buf = _hexToUint8Array(hex);
   const n = buf.length;
 
   let ops: number[] = [];
@@ -143,7 +161,7 @@ const _jitDecompressor = function (calldata: string): string {
     }
     return addOp(0x5f + bytes.length, bytes);
   };
-  const pushB = (buf: Buffer) => addOp(0x5f + buf.length, Array.from(buf));
+  const pushB = (buf: Uint8Array) => addOp(0x5f + buf.length, Array.from(buf));
   const cntWords = (hex: string, wordHex: string) =>
     (hex.match(new RegExp(wordHex, 'g')) || []).length;
 
@@ -162,18 +180,19 @@ const _jitDecompressor = function (calldata: string): string {
 
   type PlanStep =
     | { t: 'num'; v: number | bigint }
-    | { t: 'bytes'; b: Buffer }
+    | { t: 'bytes'; b: Uint8Array }
     | { t: 'op'; o: number };
 
   const plan: PlanStep[] = [];
   const emitPushN = (v: number | bigint) => (plan.push({ t: 'num', v }), pushN(v));
-  const emitPushB = (b: Buffer) => (plan.push({ t: 'bytes', b }), pushB(b));
+  const emitPushB = (b: Uint8Array) => (plan.push({ t: 'bytes', b }), pushB(b));
   const emitOp = (o: number) => (plan.push({ t: 'op', o }), op(o));
 
   // First pass: decide how to build each 32-byte word without emitting bytecode
   for (let base = 0; base < n; base += 32) {
-    const word = Buffer.alloc(32, 0);
-    buf.copy(word, 0, base, Math.min(base + 32, n));
+    const word = new Uint8Array(32);
+    const copyEnd = Math.min(base + 32, n);
+    word.set(buf.slice(base, copyEnd), 0);
 
     const seg: Array<{ s: number; e: number }> = [];
     for (let i = 0; i < 32; ) {
@@ -201,7 +220,7 @@ const _jitDecompressor = function (calldata: string): string {
     const literalCost = 1 + literal.length;
 
     const baseBytes = Math.ceil(Math.log2(base + 1) / 8);
-    const wordHex = word.toString('hex');
+    const wordHex = _uint8ArrayToHex(word);
     if (literalCost > 5) {
       if (wordCache.has(wordHex)) {
         if (literalCost > wordCacheCost.get(wordHex)! + baseBytes) {
@@ -293,7 +312,7 @@ const _jitDecompressor = function (calldata: string): string {
     if (ops[i] >= 0x60 && ops[i] <= 0x7f && data[i]) out.push(...data[i]!);
   }
 
-  return '0x' + Buffer.from(out).toString('hex') + '5f345f355af1503d5f5f3e3d5ff3';
+  return '0x' + _uint8ArrayToHex(new Uint8Array(out)) + '5f345f355af1503d5f5f3e3d5ff3';
 };
 
 const MIN_SIZE_FOR_COMPRESSION = 800;

@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { build, type BuildOptions } from 'esbuild';
+import { type BuildOptions, build } from 'esbuild';
 import { copyFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -39,7 +39,7 @@ const compressorConfig: Partial<BuildOptions> = {
 
 async function buildAll() {
   console.log('Building ESM bundles...');
-  
+
   await build({
     ...bundledConfig,
     entryPoints: [join(srcDir, 'index.node.ts')],

@@ -3,6 +3,14 @@ const { Common, Mainnet } = require('@ethereumjs/common');
 const { Address, Account } = require('@ethereumjs/util');
 const { hexToBytes } = require('../utils.js');
 
+function uint8ArrayToHex(bytes) {
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+}
+
 async function runEvmBytecode(bytecode, calldata, options = {}) {
   const common = new Common({ chain: Mainnet });
   const vm = await createVM({ common });
@@ -73,7 +81,7 @@ async function runEvmBytecode(bytecode, calldata, options = {}) {
       }
       if (memory && (memory._store || memory._data)) {
         const memBytes = memory._store || memory._data;
-        console.error('  Memory:', Buffer.from(memBytes).toString('hex'));
+        console.error('  Memory:', uint8ArrayToHex(memBytes));
       } else if (memory && memory.toString) {
         console.error('  Memory:', memory.toString());
       } else {
@@ -85,9 +93,7 @@ async function runEvmBytecode(bytecode, calldata, options = {}) {
     return null;
   }
 
-  const returnValue = execResult.returnValue
-    ? Buffer.from(execResult.returnValue).toString('hex')
-    : '';
+  const returnValue = execResult.returnValue ? uint8ArrayToHex(execResult.returnValue) : '';
   const gasUsed = execResult.executionGasUsed;
 
   if (!returnValue || returnValue.length === 0) {

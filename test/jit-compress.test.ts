@@ -23,7 +23,6 @@ interface TestData {
   transactions: Transaction[];
 }
 
-
 const mean = (values: number[]): number | null => {
   return !values.length ? null : values.reduce((acc, v) => acc + v, 0) / values.length;
 };
@@ -67,12 +66,7 @@ const printComparison = (label: string, valueA: number, valueB: number) => {
 
 const CALLER_ADDRESS = '0x9999999999999999999999999999999999999999';
 
-const testMethod = async (
-  payload: any,
-  methodName: string,
-  srcCd: string,
-  txIndex: number,
-) => {
+const testMethod = async (payload: any, methodName: string, srcCd: string, txIndex: number) => {
   if (!payload.stateDiff) return { success: true, gas: 0n };
 
   const decompressorAddress = Object.keys(payload.stateDiff)[0];
@@ -153,14 +147,14 @@ const testTransaction = async (input: string, txIndex: number): Promise<any> => 
   };
 };
 
-import { describe, test, expect } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 describe('JIT Compression Test Suite', () => {
   test('should not compress non-eth_call methods', () => {
     const payload = {
       method: 'eth_sendTransaction',
       to: ECHO_CONTRACT_ADDRESS,
-      data: '0x' + '00'.repeat(1000), 
+      data: '0x' + '00'.repeat(1000),
     };
 
     const result = compress_call(payload, 'jit');
@@ -226,25 +220,10 @@ describe('JIT Compression Test Suite', () => {
     console.log('\n=== Compression Statistics (bench-relevant Transactions Only) ===');
     console.log(`Transactions analyzed: ${benchResults.length}\n`);
 
-    printStats(
-      'Original calldata size (bytes)',
-      collect(benchResults, 'srcBytes'),
-    );
-    printStats(
-      'JIT bytecode ratio (compressed / original)',
-      collect(benchResults, 'jitRatio'),
-      4,
-    );
-    printStats(
-      'flzCompress ratio (compressed / original)',
-      collect(benchResults, 'flzRatio'),
-      4,
-    );
-    printStats(
-      'cdCompress ratio (compressed / original)',
-      collect(benchResults, 'cdRatio'),
-      4,
-    );
+    printStats('Original calldata size (bytes)', collect(benchResults, 'srcBytes'));
+    printStats('JIT bytecode ratio (compressed / original)', collect(benchResults, 'jitRatio'), 4);
+    printStats('flzCompress ratio (compressed / original)', collect(benchResults, 'flzRatio'), 4);
+    printStats('cdCompress ratio (compressed / original)', collect(benchResults, 'cdRatio'), 4);
 
     console.log('\n=== Gas Usage Statistics (bench-relevant Transactions Only) ===');
 

@@ -77,22 +77,26 @@ test('eth_call JIT compression demo using compressModule + viem', async () => {
   const { join } = await import('path');
   const { fileURLToPath } = await import('url');
   const { compress_call } = await import('../dist/_esm/jit-compressor.js');
-  const testDataPath = join(join(fileURLToPath(import.meta.url), '..'), 'fixture', '36670119.raw.json');
+  const testDataPath = join(
+    join(fileURLToPath(import.meta.url), '..'),
+    'fixture',
+    '36670119.raw.json',
+  );
   const testData = JSON.parse(readFileSync(testDataPath, 'utf8'));
 
   let bigTx = testData.transactions[0];
   for (const tx of testData.transactions) {
     if (tx.input && tx.input.length > bigTx.input.length) bigTx = tx;
   }
-  
+
   const { from, to, input: data } = bigTx;
   const testPayload = { to, data, method: 'eth_call' };
   const compressed = compress_call(testPayload);
   const originalSize = data.length / 2;
-  const compressedSize = compressed.stateDiff 
+  const compressedSize = compressed.stateDiff
     ? (Object.values(compressed.stateDiff)[0] as any).code.length / 2 + compressed.data.length / 2
     : originalSize;
-  
+
   let algorithm = 'none (too small)';
   if (compressed.stateDiff) {
     const bytecode = (Object.values(compressed.stateDiff)[0] as any).code;
