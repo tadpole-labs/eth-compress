@@ -1,0 +1,8 @@
+minimumReleaseAge: 1440
+packages:
+  - src
+  - '!**/test/**'
+
+dedupeInjectedDeps: false
+onlyBuiltDependencies:
+  - esbuild

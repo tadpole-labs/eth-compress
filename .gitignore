@@ -1,0 +1,23 @@
+node_modules
+
+*.tgz
+
+# Build output
+dist
+
+*.out
+*.app
+.directory
+*.idea
+*.swp
+.DS_Store
+*.d
+*.vscode
+*.code-workspace
+.env
+.env.local
+.envrc
+*.local
+_cjs
+_esm
+_types
