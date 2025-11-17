@@ -40,7 +40,7 @@ export const flzFwdBytecode = (address: string): string =>
  */
 //! @__PURE__
 export const rleFwdBytecode = (address: string): string =>
-  `5f5f5b368110602d575f8083813473${_normHex(address)}5af1503d5f803e3d5ff35b600180820192909160031981019035185f1a8015604c57815301906002565b505f19815282820192607f9060031981019035185f1a818111156072575b160101906002565b838101368437606a56`;
+  `0x5f5f5b368110602d575f8083813473${_normHex(address)}5af1503d5f803e3d5ff35b600180820192909160031981019035185f1a8015604c57815301906002565b505f19815282820192607f9060031981019035185f1a818111156072575b160101906002565b838101368437606a56`;
 
 /**
  * JIT Compiles decompressor bytecode
@@ -139,7 +139,7 @@ const _jitDecompressor = function (calldata: string): string {
       trackMem(k, 32);
     } else if (op === 0x53) {
       // MSTORE8
-      const [offset, value] = pop2();
+      const [offset, _] = pop2();
       trackMem(Number(offset), 1);
     } else if (op === 0xf3) {
       // RETURN
@@ -191,8 +191,7 @@ const _jitDecompressor = function (calldata: string): string {
   // First pass: decide how to build each 32-byte word without emitting bytecode
   for (let base = 0; base < n; base += 32) {
     const word = new Uint8Array(32);
-    const copyEnd = Math.min(base + 32, n);
-    word.set(buf.slice(base, copyEnd), 0);
+    word.set(buf.slice(base, Math.min(base + 32, n)), 0);
 
     const seg: Array<{ s: number; e: number }> = [];
     for (let i = 0; i < 32; ) {
@@ -268,7 +267,7 @@ const _jitDecompressor = function (calldata: string): string {
     .filter(([val, _]) => {
       return typeof val === 'number' ? val : Number(val) <= MAX_160_BIT;
     })
-    .filter(([val, freq]) => freq >= 2 && val !== 0n)
+    .filter(([val, freq]) => freq > 1 && val !== 0n)
     .sort((a, b) => stackCnt.get(b[0])! - stackCnt.get(a[0])!)
     .slice(0, 14)
     .forEach(([val, _]) => {
@@ -336,7 +335,7 @@ export const compress_call = function (payload: any, alg?: string): any {
   if (rpcMethod && rpcMethod !== 'eth_call') return payload;
 
   const hex = _normHex(payload.data || '0x');
-  const originalSize = hex.length / 2;
+  const originalSize = (payload.data || '0x').length;
   if (originalSize < MIN_SIZE_FOR_COMPRESSION) return payload;
 
   const targetAddress = payload.to || '';
@@ -361,7 +360,7 @@ export const compress_call = function (payload: any, alg?: string): any {
     bytecode = isFlz ? flzFwdBytecode(targetAddress) : rleFwdBytecode(targetAddress);
   }
 
-  const compressedSize = (bytecode.length + calldata.length) / 2;
+  const compressedSize = bytecode.length + calldata.length;
   if (compressedSize >= originalSize) return payload;
 
   return {

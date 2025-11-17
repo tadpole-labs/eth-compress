@@ -92,9 +92,9 @@ test('eth_call JIT compression demo using compressModule + viem', async () => {
   const { from, to, input: data } = bigTx;
   const testPayload = { to, data, method: 'eth_call' };
   const compressed = compress_call(testPayload);
-  const originalSize = data.length / 2;
+  const originalSize = data.length;
   const compressedSize = compressed.stateDiff
-    ? (Object.values(compressed.stateDiff)[0] as any).code.length / 2 + compressed.data.length / 2
+    ? (Object.values(compressed.stateDiff)[0] as any).code.length + compressed.data.length
     : originalSize;
 
   let algorithm = 'none (too small)';

@@ -48,7 +48,7 @@ const collectGas = (results: any[], key: string): number[] =>
 const extractPayloadSize = (payload: any, srcBytes: number): number => {
   return !payload.stateDiff
     ? srcBytes
-    : (Object.values(payload.stateDiff)[0] as any).code.length / 2 + payload.data.length / 2;
+    : (Object.values(payload.stateDiff)[0] as any).code.length + payload.data.length;
 };
 
 const printStats = (label: string, values: number[], decimals: number = 2) => {
@@ -110,7 +110,7 @@ const testTransaction = async (input: string, txIndex: number): Promise<any> => 
 
   const hex = input.replace(/^0x/, '').toLowerCase();
   const srcCd = '0x' + hex;
-  const srcBytes = hex.length / 2;
+  const srcBytes = srcCd.length;
 
   const basePayload = { to: ECHO_CONTRACT_ADDRESS, data: srcCd };
 
@@ -155,6 +155,19 @@ describe('JIT Compression Test Suite', () => {
       method: 'eth_sendTransaction',
       to: ECHO_CONTRACT_ADDRESS,
       data: '0x' + '00'.repeat(1000),
+    };
+
+    const result = compress_call(payload, 'jit');
+    expect(result).toEqual(payload);
+    expect(result.stateDiff).toBeUndefined();
+  });
+
+  test('should not compress eth_call below minimum size threshold', () => {
+    const payload = {
+      method: 'eth_call',
+      to: ECHO_CONTRACT_ADDRESS,
+      // Below MIN_SIZE_FOR_COMPRESSION
+      data: '0x' + '00'.repeat(10),
     };
 
     const result = compress_call(payload, 'jit');

@@ -35,23 +35,27 @@ export async function compressModule(
   const url =
     typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
-  if (transformPayload && init?.body && typeof init.body === 'string') {
-    try {
-      const parsed = JSON.parse(init.body as string);
-      const next = transformPayload(parsed);
-      if (next !== undefined) {
-        init = {
-          ...init,
-          body: JSON.stringify(next),
-        };
-      }
-    } catch {
-      // Non-JSON bodies are left untouched.
-    }
-  }
-
   const cached = _sup_enc.get(url);
   supported = supported === -1 ? -1 : cached === -1 ? -1 : (cached?.[0] ?? null);
+
+  // Only apply the optional payload transform
+  // when native HTTP compression is not available for this URL.
+  if (transformPayload && init?.body && typeof init.body === 'string') {
+    if (supported === -1 || supported === null) {
+      try {
+        const parsed = JSON.parse(init.body as string);
+        const next = transformPayload(parsed);
+        if (next !== undefined) {
+          init = {
+            ...init,
+            body: JSON.stringify(next),
+          };
+        }
+      } catch {
+        // Non-JSON bodies are left untouched.
+      }
+    }
+  }
 
   if (supported && supported !== -1 && init?.body) {
     const compressed = await new Response(
@@ -92,6 +96,11 @@ export async function compressModule(
  *   transport: http(rpcUrl, { fetchFn: compressModuleWithJIT })
  * })
  * ```
+ *
+ * If the target RPC endpoint and runtime support native HTTP compression,
+ * this helper prefers that path and will not apply JIT calldata compression;
+ * the JIT-based transform is used as a legacy/fallback path when HTTP
+ * content-encoding is unavailable.
  * @pure
  */
 //! @__PURE__
