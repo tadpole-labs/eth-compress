@@ -113,16 +113,18 @@ Selection logic (subject to change, but current behaviour):
 - **Size gating**:
   - `< 800 bytes`: no compression.
   - `≥ 800 bytes`: compression considered.
-  - `≥ 2096 bytes`: JIT is preferred.
+  - `≥ 1150 bytes`: JIT is preferred.
 - **Algorithm choice**:
   - For mid-sized payloads, FLZ and CD are tried and the smaller output is chosen.
   - For larger payloads, JIT is used directly, focusing on gas-efficient decompression.
+  - The thresholds are chosen with consideration for request header overhead & latency,
+  aiming to keep the total request size within the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
 
 
 ### Implementation notes & compression flavours
 - **JIT calldata compiler (`compress_call` JIT mode)**: Views the calldata as a zero‑initialized memory image and synthesises bytecode that rebuilds it word-by-word in-place. In the first pass it walks the data in 32-byte slices, detects non-zero segments per word, and for each word chooses the cheapest of three strategies: store a literal tail, assemble segments using SHL/OR, or reuse an earlier word via MLOAD/MSTORE, under a rough opcode-count cost model. In the second pass it materialises this plan into concrete PUSH/MSTORE/SHL/OR/DUP opcodes, pre-seeds the stack with frequently used constants, and appends a small CALL/RETURNDATA stub that forwards the reconstructed calldata to the original `to` address. The execution is realized through a `stateDiff` passed together with the eth_call. The 4‑byte selector is right‑aligned in the first 32‑byte slot so that the rest of the calldata can be reconstructed on mostly word‑aligned boundaries, with the decompressor stateDiff being placed at `0x00000000000000000000000000000000000000e0` such that `0xe0` can be obtained from `ADDRESS` with a single opcode instead of an explicit literal. Achieves higher compression ratios compared to both FastLZ & Run-Length-Encoding (-15-25%), at a fraction of the gas footprint (<2%).
 
-_For the culture_,freedom of choice_, and in-cases where larger dictionaries, or deeply nested / unaligned calldata proves more efficient, the alternatives are still included.
+_For the culture_, freedom of choice, and in-cases where larger dictionaries, or deeply nested / unaligned calldata prove to be more efficient, the alternatives are still included.
 
 - **FastLZ path (`LibZip.flzCompress` / `flzDecompress`)**: Implements a minimal LZ77-style compressor over raw bytes with a 3-byte rolling window. Each 24-bit chunk is hashed into a tiny table; repeated substrings within a bounded look-back distance are emitted as (length, distance) match tokens, and everything else is emitted as literal runs. Decompression is a simple loop over this stream that copies literals and then copies `length` bytes from `distance` bytes back in the already-produced output.
 

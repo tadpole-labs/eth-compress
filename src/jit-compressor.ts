@@ -127,7 +127,7 @@ const _jitDecompressor = function (calldata: string): string {
       // PUSH
       let v = 0n;
       for (const b of imm || []) v = (v << 8n) | BigInt(b);
-      const idx = getStackIdx(v); 
+      const idx = getStackIdx(v);
       pushS(v);
       if (idx !== -1 && op != 0x5f) {
         if (stackFreq2.get(v)! * 2 < stackFreq.get(v)!) {
@@ -139,9 +139,9 @@ const _jitDecompressor = function (calldata: string): string {
       if (v == 224n) {
         // Special‑case the literal 0xe0 (224):
         // the decompressor is always deployed at 0x...00e0, so the final
-        // byte of ADDRESS is exactly 0xe0. Since we must push our own
-        // address anyway, we can synthesize this value with a single
-        // opcode instead of encoding 0xe0 as an immediate, effectively
+        // byte of ADDRESS is exactly 0xe0. Since we must send our own
+        // address with the eth_call anyway, we can synthesize this value 
+        // with a single opcode instead of encoding a literal, effectively
         // giving us one more hot constant slot on the stack.
         pushOp(0x30); // ADDRESS
         pushD(null);
@@ -330,7 +330,7 @@ const _jitDecompressor = function (calldata: string): string {
     out.push(ops[i]);
     if (ops[i] >= 0x60 && ops[i] <= 0x7f && data[i]) out.push(...data[i]!);
   }
-  
+
   // - CALLVALUE, load target address from calldata[0], GAS, CALL
   // - RETURNDATACOPY(0, 0, RETURNDATASIZE)
   // - RETURN(0, RETURNDATASIZE)
@@ -364,12 +364,12 @@ export const compress_call = function (payload: any, alg?: string): any {
   const targetAddress = payload.to || '';
   const data = '0x' + hex;
 
-  const autoSelect = !alg && originalSize < 4096;
+  const autoSelect = !alg && originalSize < 1150;
   const flz = alg === _flz || autoSelect ? LibZip.flzCompress(data) : null;
   const cd = alg === _cd || autoSelect ? LibZip.cdCompress(data) : null;
 
   const selectedMethod =
-    alg || (originalSize >= 4096 ? _jit : flz!.length < cd!.length ? _flz : _cd);
+    alg || (originalSize >= 1150 ? _jit : flz!.length < cd!.length ? _flz : _cd);
 
   let bytecode: string;
   let calldata: string;

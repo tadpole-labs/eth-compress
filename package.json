@@ -1,6 +1,6 @@
 {
   "name": "eth-compress",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "(Off-chain) calldata compression module for ethereum.",
@@ -92,8 +92,7 @@
     "format:check": "biome format .",
     "check": "biome check .",
     "check:fix": "biome check --write .",
-    "ci:install": "pnpm install --frozen-lockfile --ignore-scripts",
-    "prepublishOnly": "pnpm run build"
+    "ci:install": "pnpm install --frozen-lockfile --ignore-scripts"
   },
   "engines": {
     "node": ">=22",
