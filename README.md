@@ -1,8 +1,10 @@
 ## eth-compress
 
-Compact client-side module for compressing Ethereum JSON-RPC requests.
+Compact client-side module for compressing Ethereum JSON-RPC requests, targeting **lower latency** and gas-efficient **read-only calls** with large calldata.
 
-It combines HTTP body compression with optional JIT-compiled calldata compression for `eth_call`, targeting **lower latency** and gas-efficient **read-only calls** with large calldata.
+It combines [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-12.5.3)-compliant negotiation for client-to-server compression, with optional JIT-compiled calldata compression for `eth_call`s.
+
+_Plug'n Play with viem & with a simple API_
 
 ### Scope
   - **Only read-only `eth_call`'s are considered**
