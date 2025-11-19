@@ -1,7 +1,7 @@
 {
   "name": "eth-compress",
   "version": "0.2.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "Client-to-server compression (viem-compatible) module for compressed, gas-efficient, low-latency eth_call requests.",
   "keywords": [
