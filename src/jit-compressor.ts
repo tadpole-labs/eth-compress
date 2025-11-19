@@ -54,7 +54,17 @@ export const jitBytecode = function (calldata: string): string {
 
 const _jitDecompressor = function (calldata: string): string {
   const hex = _normHex(calldata);
-  const buf = _hexToUint8Array(hex);
+  const originalBuf = _hexToUint8Array(hex);
+
+  // Right‑align the 4‑byte selector in the first 32‑byte slot (offset 28),
+  // so that everything after the selector is reconstructed on mostly
+  // word‑aligned boundaries. This keeps the ABI words (and therefore most
+  // calldata reconstruction) 32‑byte aligned in memory.
+  // That way we avoid encoding offsets for writes (most of the time),
+  const padding = 28;
+  const buf = new Uint8Array(padding + originalBuf.length);
+  buf.set(originalBuf, padding);
+
   const n = buf.length;
 
   let ops: number[] = [];
@@ -63,7 +73,6 @@ const _jitDecompressor = function (calldata: string): string {
   let stackFreq2 = new Map<bigint, number>();
   let trackedMemSize = 0;
   let mem = new Map<number, bigint>();
-
   const getStackIdx = (val: bigint): number => {
     const idx = stack.lastIndexOf(val);
     return idx === -1 ? -1 : stack.length - 1 - idx;
@@ -118,13 +127,24 @@ const _jitDecompressor = function (calldata: string): string {
       // PUSH
       let v = 0n;
       for (const b of imm || []) v = (v << 8n) | BigInt(b);
-      const idx = getStackIdx(v);
+      const idx = getStackIdx(v); 
       pushS(v);
       if (idx !== -1 && op != 0x5f) {
         if (stackFreq2.get(v)! * 2 < stackFreq.get(v)!) {
           pushOp(128 + idx);
           pushD(null);
         }
+        return;
+      }
+      if (v == 224n) {
+        // Special‑case the literal 0xe0 (224):
+        // the decompressor is always deployed at 0x...00e0, so the final
+        // byte of ADDRESS is exactly 0xe0. Since we must push our own
+        // address anyway, we can synthesize this value with a single
+        // opcode instead of encoding 0xe0 as an immediate, effectively
+        // giving us one more hot constant slot on the stack.
+        pushOp(0x30); // ADDRESS
+        pushD(null);
         return;
       }
     } else if (op === 0x51) {
@@ -220,7 +240,7 @@ const _jitDecompressor = function (calldata: string): string {
 
     const baseBytes = Math.ceil(Math.log2(base + 1) / 8);
     const wordHex = _uint8ArrayToHex(word);
-    if (literalCost > 5) {
+    if (literalCost > 8) {
       if (wordCache.has(wordHex)) {
         if (literalCost > wordCacheCost.get(wordHex)! + baseBytes) {
           emitPushN(wordCache.get(wordHex)!);
@@ -230,7 +250,7 @@ const _jitDecompressor = function (calldata: string): string {
           continue;
         }
       } else if (wordCacheCost.get(wordHex) != -1) {
-        const reuseCost = baseBytes + 4;
+        const reuseCost = baseBytes + 3;
         const freq = cntWords(hex, wordHex);
         wordCacheCost.set(wordHex, freq * 32 > freq * reuseCost ? reuseCost : -1);
         wordCache.set(wordHex, base);
@@ -264,10 +284,10 @@ const _jitDecompressor = function (calldata: string): string {
 
   // Pre 2nd pass. Push most frequent literals into stack.
   Array.from(stackFreq.entries())
+    .filter(([val, freq]) => freq > 1 && val !== 0n && val !== 224n)
     .filter(([val, _]) => {
       return typeof val === 'number' ? val : Number(val) <= MAX_160_BIT;
     })
-    .filter(([val, freq]) => freq > 1 && val !== 0n)
     .sort((a, b) => stackCnt.get(b[0])! - stackCnt.get(a[0])!)
     .slice(0, 14)
     .forEach(([val, _]) => {
@@ -275,7 +295,6 @@ const _jitDecompressor = function (calldata: string): string {
     });
 
   stackFreq2 = new Map();
-
   // Second pass: emit ops and track mem/stack
   for (const step of plan) {
     if (step.t === 'num') pushN(step.v);
@@ -287,8 +306,8 @@ const _jitDecompressor = function (calldata: string): string {
   //
   // Opcodes breakdown:
   // - 0x5f5f: PUSH0 PUSH0 (retSize=0, retOffset=0)
-  // - pushN(n): argsSize = actual data length
-  // - 0x5f: PUSH0 (argsOffset=0)
+  // - pushN(originalBuf.length): argsSize = actual data length
+  // - pushN(padding): argsOffset (skip leading alignment bytes)
   // - 0x34: CALLVALUE (value)
   // - 0x5f35: PUSH0 CALLDATALOAD (address from calldata[0])
   // - 0x5a: GAS (remaining gas)
@@ -303,19 +322,23 @@ const _jitDecompressor = function (calldata: string): string {
 
   op(0x5f); // PUSH0 (retSize)
   op(0x5f); // PUSH0 (retOffset)
-  pushN(n); // argsSize = actual data length
+  pushN(originalBuf.length); // argsSize = actual data length
+  pushN(padding); // argsOffset = padding
 
   const out: number[] = [];
   for (let i = 0; i < ops.length; ++i) {
     out.push(ops[i]);
     if (ops[i] >= 0x60 && ops[i] <= 0x7f && data[i]) out.push(...data[i]!);
   }
-
-  return '0x' + _uint8ArrayToHex(new Uint8Array(out)) + '5f345f355af1503d5f5f3e3d5ff3';
+  
+  // - CALLVALUE, load target address from calldata[0], GAS, CALL
+  // - RETURNDATACOPY(0, 0, RETURNDATASIZE)
+  // - RETURN(0, RETURNDATASIZE)
+  return '0x' + _uint8ArrayToHex(new Uint8Array(out)) + '345f355af1503d5f5f3e3d5ff3';
 };
 
 const MIN_SIZE_FOR_COMPRESSION = 800;
-const DECOMPRESSOR_ADDRESS = '0x0000000000000010000000000000000000000001';
+const DECOMPRESSOR_ADDRESS = '0x00000000000000000000000000000000000000e0';
 
 const _jit = 'jit';
 const _flz = 'flz';

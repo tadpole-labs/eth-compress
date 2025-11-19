@@ -105,14 +105,27 @@ const testMethod = async (payload: any, methodName: string, srcCd: string, txInd
   return { success: false, gas: undefined };
 };
 
-const testTransaction = async (input: string, txIndex: number): Promise<any> => {
+const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> => {
+  const input = tx.input;
   if (!input || input === '0x' || input.length <= 2) return null;
 
   const hex = input.replace(/^0x/, '').toLowerCase();
   const srcCd = '0x' + hex;
   const srcBytes = srcCd.length;
 
-  const basePayload = { to: ECHO_CONTRACT_ADDRESS, data: srcCd };
+  const basePayload = {
+    method: 'eth_call',
+    to: ECHO_CONTRACT_ADDRESS,
+    data: srcCd,
+    from: tx.from,
+    params: [
+      {
+        from: tx.from,
+        to: tx.to,
+        data: srcCd,
+      },
+    ],
+  };
 
   const payloads = {
     jit: compress_call(basePayload, 'jit'),
@@ -195,7 +208,7 @@ describe('JIT Compression Test Suite', () => {
 
     for (let i = 0; i < txsWithCalldata.length; i++) {
       const { tx, idx } = txsWithCalldata[i];
-      const metrics = await testTransaction(tx.input, idx);
+      const metrics = await testTransaction(tx, idx);
 
       if (metrics) {
         results.push(metrics);
