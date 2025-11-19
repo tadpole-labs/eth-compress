@@ -3,14 +3,14 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "(Off-chain) calldata compression module for ethereum.",
+  "description": "Client-to-server compression (viem-compatible) module for compressed, gas-efficient, low-latency eth_call requests.",
   "keywords": [
-    "evm",
-    "jit",
+    "eth_call compress",
     "compression",
-    "calldata",
-    "ethereum",
-    "bytecode"
+    "json-rpc compress",
+    "calldata compress",
+    "latency",
+    "viem"
   ],
   "bugs": "https://github.com/tadpole-labs/eth-compress/issues",
   "repository": {
