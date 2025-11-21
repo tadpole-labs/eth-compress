@@ -284,7 +284,7 @@ describe('JIT Compression Test Suite', () => {
     const avgSrcSize = mean(srcSizes);
 
     console.log(
-      `\n${results.length} txs | JIT: ${successCnt.jit} ✓ | FLZ: ${successCnt.flz} ✓ | CD: ${successCnt.cd} ✓`,
+      `\n${results.length} txs | JIT: \x1b[32m${successCnt.jit}\x1b[0m | FLZ: \x1b[32m${successCnt.flz}\x1b[0m | CD: \x1b[32m${successCnt.cd}\x1b[0m`,
     );
     console.log(`Avg Src Size: ${avgSrcSize.toFixed(1)} bytes`);
     console.log(
@@ -357,7 +357,7 @@ describe('JIT Compression Test Suite', () => {
     const cdGas = results.map((r) => Number(r.cdGasUsed)).filter((v) => v);
 
     console.log(
-      `\n${results.length} txs | JIT: ${successCnt.jit} ✓ | FLZ: ${successCnt.flz} ✓ | CD: ${successCnt.cd} ✓`,
+      `\n${results.length} txs | JIT: \x1b[32m${successCnt.jit}\x1b[0m | FLZ: \x1b[32m${successCnt.flz}\x1b[0m | CD: \x1b[32m${successCnt.cd}\x1b[0m`,
     );
     console.log(
       `Ratio: JIT ${(mean(jitRatios) * 100).toFixed(1)}% | FLZ ${(mean(flzRatios) * 100).toFixed(1)}% | CD ${(mean(cdRatios) * 100).toFixed(1)}%`,

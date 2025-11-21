@@ -116,7 +116,7 @@ describe('Viem Multicall with JIT Compression', () => {
 
     // Get current block number for consistent testing
     const blockNumber = await client.getBlockNumber();
-    console.log(`\n📦 Testing multicall with block number: ${blockNumber}`);
+    console.log(`\nTesting multicall with block number: ${blockNumber}`);
 
     // Build ~20 multicall contracts
     const contracts = [
@@ -193,33 +193,27 @@ describe('Viem Multicall with JIT Compression', () => {
       },
     ] as const;
 
-    console.log(`📊 Executing ${contracts.length} multicalls...`);
-    console.log(`   - USDC: 6 calls`);
-    console.log(`   - WETH: 6 calls`);
-    console.log(`   - DAI: 5 calls`);
-    console.log(`   - cbETH: 4 calls`);
-    console.log(`   - Allowance: 1 call`);
+    console.log(`Executing ${contracts.length} multicalls...`);
 
     // Perform multicall
-    console.log('\n🔄 Performing multicall...');
     const results = await client.multicall({
       contracts,
       blockNumber,
     });
 
-    console.log(`✅ Multicall completed: ${results.length} results`);
+    console.log(`Multicall completed: ${results.length} results`);
 
     const successCount = results.filter((r) => r.status === 'success').length;
     const failureCount = results.filter((r) => r.status === 'failure').length;
 
-    console.log(`   Success: ${successCount}`);
-    console.log(`   Failure: ${failureCount}`);
+    console.log(`   \x1b[32mSuccess: ${successCount}\x1b[0m`);
+    console.log(`   \x1b[31mFailure: ${failureCount}\x1b[0m`);
 
     expect(results.length).toBe(contracts.length);
     expect(successCount).toBeGreaterThan(0);
 
     // Display some sample results
-    console.log('\n📋 Sample results:');
+    console.log('\nSample results:');
     results.slice(0, 10).forEach((result, i) => {
       if (result.status === 'success') {
         const contract = contracts[i];
@@ -227,11 +221,11 @@ describe('Viem Multicall with JIT Compression', () => {
           `   ${i + 1}. ${contract.functionName}: ${String(result.result).substring(0, 50)}${String(result.result).length > 50 ? '...' : ''}`,
         );
       } else {
-        console.log(`   ${i + 1}. ✗ Error: ${result.error?.message || 'Unknown'}`);
+        console.log(`   ${i + 1}. \x1b[31mFAIL:\x1b[0m ${result.error?.message || 'Unknown'}`);
       }
     });
 
-    console.log('\n✨ Viem multicall compression test completed\n');
+    console.log('\nViem multicall compression test completed\n');
   }, 60000);
 
   test('should compress large eth_call through viem with JIT', async () => {
@@ -255,7 +249,7 @@ describe('Viem Multicall with JIT Compression', () => {
     });
 
     const blockNumber = await client.getBlockNumber();
-    console.log(`\n📦 Testing JIT compression with block: ${blockNumber}`);
+    console.log(`\nTesting JIT compression with block: ${blockNumber}`);
 
     for (let i = 0; i < largeTxs.length; i++) {
       const tx = largeTxs[i];
@@ -279,7 +273,9 @@ describe('Viem Multicall with JIT Compression', () => {
         });
 
         const matches = result.data?.toLowerCase() === tx.input.toLowerCase();
-        console.log(`   Result: ${matches ? '✓ Match' : '✗ Mismatch'}`);
+        console.log(
+          `   Result: ${matches ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'} ${matches ? 'Match' : 'Mismatch'}`,
+        );
         console.log(`   Output length: ${result.data?.length || 0} chars`);
 
         expect(result.data?.toLowerCase()).toBe(tx.input.toLowerCase());
@@ -288,17 +284,17 @@ describe('Viem Multicall with JIT Compression', () => {
       }
     }
 
-    console.log('\n✨ JIT compression test completed\n');
+    console.log('\nJIT compression test completed\n');
   }, 60000);
 
-  test('should merge state overrides without data loss', async () => {
+  test('should not compress when state overrides are present', async () => {
     // Import the compress_call function
     const { compress_call } = await import('../dist/_esm/jit-compressor.js');
 
     // Create a large calldata payload (>1150 bytes to trigger compression)
-    const largeCalldata = '0x' + 'ab'.repeat(5700); // 1000 bytes
+    const largeCalldata = '0x' + 'ab'.repeat(5700);
 
-    // Create existing state overrides that should be preserved
+    // Create existing state overrides
     const existingOverrides = {
       '0x1111111111111111111111111111111111111111': {
         balance: '0x1000000000000000000',
@@ -326,45 +322,62 @@ describe('Viem Multicall with JIT Compression', () => {
       ],
     };
 
-    // Compress the payload
-    const compressed = compress_call(payload, 'jit');
+    // Should return uncompressed payload
+    const result = compress_call(payload, 'jit');
 
-    // Verify the decompressor address is used
-    expect(compressed.params[0].to).toBe('0x00000000000000000000000000000000000000e0');
+    // Verify payload was NOT compressed (returned as-is)
+    expect(result).toBe(payload);
+    expect(result.params[0].to).toBe('0x3333333333333333333333333333333333333333');
+    expect(result.params[2]).toEqual(existingOverrides);
 
-    // Verify state overrides were merged correctly
-    const mergedOverrides = compressed.params[2];
+    console.log('\x1b[32mPASS\x1b[0m State override rejection test - compression skipped');
+  });
 
-    // Check that existing overrides are preserved
-    expect(mergedOverrides['0x1111111111111111111111111111111111111111']).toEqual({
-      balance: '0x1000000000000000000',
-      code: '0x6080604052',
-    });
-    expect(mergedOverrides['0x2222222222222222222222222222222222222222']).toEqual({
-      nonce: '0x5',
-      stateDiff: {
-        '0x0000000000000000000000000000000000000000000000000000000000000001': '0xabcd',
+  test('should compress when state override contains only Multicall3', async () => {
+    const { compress_call } = await import('../dist/_esm/jit-compressor.js');
+
+    const largeCalldata = '0x' + 'ab'.repeat(600);
+    const multicallAddress = '0xcA11bde05977b3631167028862bE2a173976CA11';
+
+    const existingOverrides = {
+      [multicallAddress]: {
+        code: '0x1234',
       },
-    });
+    };
 
-    // Check that decompressor override was added
-    expect(mergedOverrides['0x00000000000000000000000000000000000000e0']).toBeDefined();
-    expect(mergedOverrides['0x00000000000000000000000000000000000000e0'].code).toBeDefined();
-    expect(
-      mergedOverrides['0x00000000000000000000000000000000000000e0'].code.startsWith('0x'),
-    ).toBe(true);
+    const payload = {
+      method: 'eth_call',
+      params: [
+        {
+          to: '0x3333333333333333333333333333333333333333',
+          data: largeCalldata,
+        },
+        'latest',
+        existingOverrides,
+      ],
+    };
 
-    // Verify we have exactly 3 addresses in the merged overrides
-    expect(Object.keys(mergedOverrides).length).toBe(3);
+    const result = compress_call(payload, 'jit');
 
-    console.log('✅ State override merging test passed - no data loss');
+    // Should compress
+    expect(result).not.toBe(payload);
+    expect(result.params[0].to).toBe('0x00000000000000000000000000000000000000e0'); // Decompressor address
+
+    // Verify overrides are merged
+    const resultOverrides = result.params[2];
+    expect(resultOverrides[multicallAddress]).toEqual(existingOverrides[multicallAddress]);
+    expect(resultOverrides['0x00000000000000000000000000000000000000e0']).toBeDefined();
+
+    console.log(
+      '\x1b[32mPASS\x1b[0m Multicall3 override test - compression applied and overrides merged',
+    );
   });
 
   test('should not compress when decompressor address has existing override', async () => {
     // Import the compress_call function
     const { compress_call } = await import('../dist/_esm/jit-compressor.js');
 
-    const largeCalldata = '0x' + 'ab'.repeat(500);
+    const largeCalldata = '0x' + 'ab'.repeat(600);
 
     // Create state overrides that include the decompressor address
     const existingOverrides = {
@@ -391,6 +404,79 @@ describe('Viem Multicall with JIT Compression', () => {
     // Verify payload was NOT compressed (returned as-is)
     expect(result).toBe(payload);
 
-    console.log('✅ Decompressor address conflict test passed - compression skipped');
+    console.log('\x1b[32mPASS\x1b[0m Decompressor address conflict test - compression skipped');
+  });
+
+  test('should not compress when block parameter is not latest', async () => {
+    const { compress_call } = await import('../dist/_esm/jit-compressor.js');
+
+    const largeCalldata = '0x' + 'ab'.repeat(600);
+
+    const payload = {
+      method: 'eth_call',
+      params: [
+        {
+          to: '0x3333333333333333333333333333333333333333',
+          data: largeCalldata,
+        },
+        '0x123456', // Specific block number
+      ],
+    };
+
+    const result = compress_call(payload, 'jit');
+
+    // Should not compress
+    expect(result).toBe(payload);
+
+    console.log('\x1b[32mPASS\x1b[0m Non-latest block test - compression skipped');
+  });
+
+  test('should not compress when call has extra properties', async () => {
+    const { compress_call } = await import('../dist/_esm/jit-compressor.js');
+
+    const largeCalldata = '0x' + 'ab'.repeat(600);
+
+    const payload = {
+      method: 'eth_call',
+      params: [
+        {
+          to: '0x3333333333333333333333333333333333333333',
+          data: largeCalldata,
+          gas: '0x100000', // Extra property
+        },
+        'latest',
+      ],
+    };
+
+    const result = compress_call(payload, 'jit');
+
+    // Should not compress
+    expect(result).toBe(payload);
+
+    console.log('\x1b[32mPASS\x1b[0m Extra properties test - compression skipped');
+  });
+
+  test('should not compress when missing target address', async () => {
+    const { compress_call } = await import('../dist/_esm/jit-compressor.js');
+
+    const largeCalldata = '0x' + 'ab'.repeat(600);
+
+    const payload = {
+      method: 'eth_call',
+      params: [
+        {
+          data: largeCalldata,
+          // Missing 'to' address
+        },
+        'latest',
+      ],
+    };
+
+    const result = compress_call(payload, 'jit');
+
+    // Should not compress
+    expect(result).toBe(payload);
+
+    console.log('\x1b[32mPASS\x1b[0m Missing target address test - compression skipped');
   });
 });

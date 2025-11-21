@@ -90,21 +90,32 @@ test('eth_call JIT compression demo using compressModule + viem', async () => {
   }
 
   const { from, to, input: data } = bigTx;
-  const testPayload = { to, data, method: 'eth_call' };
+  // Properly structure the RPC payload with method and params
+  const testPayload = {
+    method: 'eth_call',
+    params: [{ to, data }],
+  };
   const compressed = compress_call(testPayload);
   const originalSize = data.length;
-  const compressedSize = compressed.stateDiff
-    ? (Object.values(compressed.stateDiff)[0] as any).code.length + compressed.data.length
+
+  // Check if compression was applied by looking at params[2] (state overrides)
+  const stateOverrides = compressed.params?.[2];
+  const decompressorOverride = stateOverrides?.['0x00000000000000000000000000000000000000e0'];
+  const compressedData = compressed.params?.[0]?.data || compressed.data;
+
+  const compressedSize = decompressorOverride
+    ? decompressorOverride.code.length + compressedData.length
     : originalSize;
 
-  let algorithm = 'none (too small)';
-  if (compressed.stateDiff) {
-    const bytecode = (Object.values(compressed.stateDiff)[0] as any).code;
-    if (bytecode.endsWith('5f345f355af1503d5f5f3e3d5ff3')) {
+  let algorithm = 'none (not beneficial or too small)';
+  if (decompressorOverride) {
+    const bytecode = decompressorOverride.code;
+    // JIT decompressor ends with the specific suffix
+    if (bytecode.endsWith('345f355af13d5f5f3e3d5ff3')) {
       algorithm = 'JIT';
     } else if (bytecode.startsWith('0x365f73')) {
       algorithm = 'FastLZ (FLZ)';
-    } else if (bytecode.startsWith('5f5f5b') || bytecode.startsWith('0x5f5f5b')) {
+    } else if (bytecode.startsWith('0x5f5f5b')) {
       algorithm = 'Calldata RLE (CD)';
     }
   }

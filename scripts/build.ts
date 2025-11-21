@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { type BuildOptions, build } from 'esbuild';
 import { copyFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -99,9 +99,13 @@ async function buildAll() {
 
   console.log('Generating TypeScript declarations...');
 
-  execSync(`tsc --emitDeclarationOnly --declaration --declarationMap --outDir ${typesDir}`, {
-    stdio: 'inherit',
-  });
+  execFileSync(
+    'tsc',
+    ['--emitDeclarationOnly', '--declaration', '--declarationMap', '--outDir', typesDir],
+    {
+      stdio: 'inherit',
+    },
+  );
 
   console.log('Copying package.json, README and LICENSE to dist...');
 

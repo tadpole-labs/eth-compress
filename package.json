@@ -1,6 +1,6 @@
 {
   "name": "eth-compress",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": false,
   "type": "module",
   "description": "Client-to-server compression (viem-compatible) module for compressed, gas-efficient, low-latency eth_call requests.",
@@ -120,7 +120,7 @@
     "esbuild": "0.27.0",
     "typescript": "5.9.3",
     "viem": "2.39.3",
-    "vitest": "4.0.10"
+    "vitest": "4.0.12"
   },
   "browserslist": [
     ">0.3%",

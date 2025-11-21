@@ -1,6 +1,6 @@
 import { LibZip } from 'solady';
 
-const MAX_160_BIT = (1n << 128n) - 1n;
+const MAX_128_BIT = (1n << 128n) - 1n;
 
 const _normHex = (hex: string): string => hex.replace(/^0x/, '').toLowerCase();
 
@@ -29,7 +29,7 @@ const _uint8ArrayToHex = (bytes: Uint8Array): string => {
  * @pure
  */
 //! @__PURE__
-export const flzFwdBytecode = (address: string): string =>
+const flzFwdBytecode = (address: string): string =>
   `0x365f73${_normHex(address)}815b838110602f575f80848134865af1503d5f803e3d5ff35b803590815f1a8060051c908115609857600190600783149285831a6007018118840218600201948383011a90601f1660081b0101808603906020811860208211021890815f5b80830151818a015201858110609257505050600201019201916018565b82906075565b6001929350829150019101925f5b82811060b3575001916018565b85851060c1575b60010160a6565b936001818192355f1a878501530194905060ba56`;
 
 /**
@@ -39,18 +39,8 @@ export const flzFwdBytecode = (address: string): string =>
  * @pure
  */
 //! @__PURE__
-export const rleFwdBytecode = (address: string): string =>
+const rleFwdBytecode = (address: string): string =>
   `0x5f5f5b368110602d575f8083813473${_normHex(address)}5af1503d5f803e3d5ff35b600180820192909160031981019035185f1a8015604c57815301906002565b505f19815282820192607f9060031981019035185f1a818111156072575b160101906002565b838101368437606a56`;
-
-/**
- * JIT Compiles decompressor bytecode
- * @param calldata - Calldata to compress
- * @pure
- */
-//! @__PURE__
-export const jitBytecode = function (calldata: string): string {
-  return _jitDecompressor('0x' + _normHex(calldata));
-};
 
 const _jitDecompressor = function (calldata: string): string {
   const hex = _normHex(calldata);
@@ -314,7 +304,7 @@ const _jitDecompressor = function (calldata: string): string {
     .filter(([val, freq]) => freq > 1 && val > 1n && val !== 32n && val !== 224n)
     .sort((a, b) => stackCnt.get(b[0])! - stackCnt.get(a[0])!)
     .filter(([val, _]) => {
-      return typeof val === 'number' ? BigInt(val) : val <= MAX_160_BIT;
+      return typeof val === 'number' ? BigInt(val) : val <= MAX_128_BIT;
     })
     .slice(0, 13)
     .forEach(([val, _]) => {
@@ -364,14 +354,18 @@ const _jitDecompressor = function (calldata: string): string {
 
 const MIN_SIZE_FOR_COMPRESSION = 1150;
 const DECOMPRESSOR_ADDRESS = '0x00000000000000000000000000000000000000e0';
-
-const _jit = 'jit';
-const _flz = 'flz';
-const _cd = 'cd';
+const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 
 /**
  * Compresses eth_call payload using JIT, FastLZ (FLZ), or calldata RLE (CD) compression.
  * Auto-selects best algorithm if not specified. Only compresses if >800 bytes and beneficial.
+ *
+ * Only applies compression to calls that:
+ * - target the latest block ID
+ * - have no state overrides
+ * - have a target address and calldata
+ * - have no other properties (nonce, gas, etc.)
+ *
  * @param payload - eth_call RPC payload
  * @param alg - 'jit' | 'flz' | 'cd' | undefined (auto)
  * @returns (un)compressed eth_call payload
@@ -379,65 +373,65 @@ const _cd = 'cd';
  */
 //! @__PURE__
 export const compress_call = function (payload: any, alg?: string): any {
-  const rpcMethod = payload.params?.[0]?.method || payload.method;
-  if (rpcMethod && rpcMethod !== 'eth_call') return payload;
+  const { method, params } = payload;
+  if (method && method !== 'eth_call') return payload;
 
-  // Extract data and target address from params[0] if available, otherwise top-level
-  const txObj = payload.params?.[0] || payload;
-  const blockParam = payload.params?.[1] || 'latest';
-  const existingStateOverride = payload.params?.[2] || {};
+  const txObj = params?.[0] || payload;
+  const blockParam = params?.[1];
+  const overrides = params?.[2];
 
-  // If there are any existing state overrides for the decompressor address, do not compress
-  const hex = _normHex(txObj.data || '0x');
-  const originalSize = (txObj.data || '0x').length;
-  if (originalSize < MIN_SIZE_FOR_COMPRESSION || (existingStateOverride[DECOMPRESSOR_ADDRESS])) return payload;
-
-  const targetAddress = txObj.to || '';
-  const data = '0x' + hex;
-
-  const autoSelect = !alg && originalSize < 1150;
-  const flz = alg === _flz || autoSelect ? LibZip.flzCompress(data) : null;
-  const cd = alg === _cd || autoSelect ? LibZip.cdCompress(data) : null;
-  let selectedMethod = alg;
-  if (!selectedMethod) {
-    selectedMethod =
-      originalSize >= 1150 && (originalSize < 3000 || originalSize >= 8000)
-        ? _jit
-        : originalSize >= 3000 && originalSize < 8000
-          ? flz!.length < cd!.length
-            ? _flz
-            : _cd
-          : _cd;
+  // Validation
+  if (
+    (blockParam && blockParam !== 'latest') ||
+    (overrides &&
+      Object.keys(overrides).some((k) => k.toLowerCase() !== MULTICALL3_ADDRESS.toLowerCase())) ||
+    !txObj?.to ||
+    !txObj?.data ||
+    Object.keys(txObj).some((k) => !['to', 'data', 'from'].includes(k))
+  ) {
+    return payload;
   }
 
+  const originalSize = txObj.data.length;
+  if (originalSize < MIN_SIZE_FOR_COMPRESSION) return payload;
+
+  const inputData = '0x' + _normHex(txObj.data);
+  const to = txObj.to;
+
+  // Determine compression method and generate bytecode/calldata
   let bytecode: string;
   let calldata: string;
 
-  if (selectedMethod === _jit) {
-    bytecode = _jitDecompressor(data);
-    calldata = '0x' + _normHex(targetAddress).padStart(64, '0');
+  if (alg === 'jit' || (!alg && (originalSize < 3000 || originalSize >= 8000))) {
+    bytecode = _jitDecompressor(inputData);
+    calldata = '0x' + _normHex(to).padStart(64, '0');
   } else {
-    const isFlz = selectedMethod === _flz;
-    calldata = isFlz ? flz! : cd!;
-    bytecode = isFlz ? flzFwdBytecode(targetAddress) : rleFwdBytecode(targetAddress);
+    // Need FLZ and/or CD compression
+    const flzData = alg === 'flz' || !alg ? LibZip.flzCompress(inputData) : null;
+    const cdData = alg === 'cd' || (!alg && flzData) ? LibZip.cdCompress(inputData) : null;
+
+    // Pick the best or requested one
+    const useFlz =
+      alg === 'flz' || (!alg && flzData && (!cdData || flzData.length < cdData.length));
+
+    if (useFlz) {
+      calldata = flzData!;
+      bytecode = flzFwdBytecode(to);
+    } else {
+      calldata = cdData!;
+      bytecode = rleFwdBytecode(to);
+    }
   }
 
-  const compressedSize = bytecode.length + calldata.length;
-  if (compressedSize >= originalSize) return payload;
+  // Skip if not beneficial
+  if (bytecode.length + calldata.length >= originalSize) return payload;
 
   return {
     ...payload,
     params: [
-      {
-        ...txObj,
-        to: DECOMPRESSOR_ADDRESS,
-        data: calldata,
-      },
-      blockParam,
-      {
-        ...existingStateOverride,
-        [DECOMPRESSOR_ADDRESS]: { code: bytecode },
-      },
+      { ...txObj, to: DECOMPRESSOR_ADDRESS, data: calldata },
+      blockParam || 'latest',
+      { ...overrides, [DECOMPRESSOR_ADDRESS]: { code: bytecode } },
     ],
   };
 };
