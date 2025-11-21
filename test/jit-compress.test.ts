@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
@@ -23,64 +23,38 @@ interface TestData {
   transactions: Transaction[];
 }
 
-const mean = (values: number[]): number | null => {
-  return !values.length ? null : values.reduce((acc, v) => acc + v, 0) / values.length;
-};
-
-const median = (values: number[]): number | null => {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-};
-
-const collect = (results: any[], key: string): number[] =>
-  results
-    .map((r) => r[key])
-    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
-
-const collectGas = (results: any[], key: string): number[] =>
-  results
-    .map((r) => r[key])
-    .filter((v): v is bigint => typeof v === 'bigint')
-    .map((v) => Number(v));
-
-const extractPayloadSize = (payload: any, srcBytes: number): number => {
-  return !payload.stateDiff
-    ? srcBytes
-    : (Object.values(payload.stateDiff)[0] as any).code.length + payload.data.length;
-};
-
-const printStats = (label: string, values: number[], decimals: number = 2) => {
-  if (!values.length) return;
-  console.log(`\n${label}:`);
-  console.log(`Average: ${mean(values)?.toFixed(decimals)}`);
-  console.log(`Median:  ${median(values)?.toFixed(decimals)}`);
-};
-
-const printComparison = (label: string, valueA: number, valueB: number) => {
-  const ratio = (valueA / valueB) * 100;
-  const comparison = valueA < valueB ? 'better' : 'worse';
-  console.log(`${label}: ${ratio.toFixed(2)}% (${comparison})`);
-};
+const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
 
 const CALLER_ADDRESS = '0x9999999999999999999999999999999999999999';
 
-const testMethod = async (payload: any, methodName: string, srcCd: string, txIndex: number) => {
-  if (!payload.stateDiff) return { success: true, gas: 0n };
+const testMethod = async (
+  payload: any,
+  methodName: string,
+  srcCd: string,
+  txIndex: number,
+  targetAddress: string,
+) => {
+  // Extract state override from params[2]
+  const stateOverride = payload.params?.[2];
+  if (!stateOverride) return { success: true, gas: 0n, reconstructed: undefined, error: undefined };
 
-  const decompressorAddress = Object.keys(payload.stateDiff)[0];
-  const decompressorCode = payload.stateDiff[decompressorAddress].code;
+  const decompressorAddress = Object.keys(stateOverride).find((addr) => stateOverride[addr].code);
+  if (!decompressorAddress)
+    return { success: true, gas: 0n, reconstructed: undefined, error: undefined };
 
-  const state = {
-    [ECHO_CONTRACT_ADDRESS]: {
+  const decompressorCode = stateOverride[decompressorAddress].code;
+  const txObj = payload.params[0];
+
+  // Set up both the target contract (echo) and any addresses from state override
+  const state: any = {
+    [targetAddress]: {
       code: ECHO_CONTRACT_BYTECODE,
       balance: '0',
     },
   };
 
   try {
-    const evmResult = await runEvmBytecode(decompressorCode, payload.data, {
+    const evmResult = await runEvmBytecode(decompressorCode, txObj.data, {
       state,
       contractAddress: decompressorAddress,
       callerAddress: CALLER_ADDRESS,
@@ -89,20 +63,18 @@ const testMethod = async (payload: any, methodName: string, srcCd: string, txInd
     if (evmResult?.returnValue) {
       const reconstructed = evmResult.returnValue.toLowerCase();
       const success = reconstructed === srcCd.toLowerCase();
-
-      if (!success) {
-        console.error(`\n${methodName} roundtrip failed for transaction ${txIndex}`);
-        console.error(`Expected: ${srcCd.slice(0, 100)}...`);
-        console.error(`Got:      ${reconstructed.slice(0, 100)}...`);
-      }
-
-      return { success, gas: evmResult.gasUsed };
+      return { success, gas: evmResult.gasUsed, reconstructed, error: undefined };
     }
   } catch (err) {
-    console.error(`\nError validating ${methodName} for transaction ${txIndex}:`, err);
+    return {
+      success: false,
+      gas: undefined,
+      reconstructed: undefined,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
-  return { success: false, gas: undefined };
+  return { success: false, gas: undefined, reconstructed: undefined, error: 'No return value' };
 };
 
 const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> => {
@@ -115,16 +87,16 @@ const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> =
 
   const basePayload = {
     method: 'eth_call',
-    to: ECHO_CONTRACT_ADDRESS,
-    data: srcCd,
-    from: tx.from,
     params: [
       {
         from: tx.from,
         to: tx.to,
         data: srcCd,
       },
+      'latest',
     ],
+    id: 1,
+    jsonrpc: '2.0',
   };
 
   const payloads = {
@@ -133,19 +105,58 @@ const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> =
     cd: compress_call(basePayload, 'cd'),
   };
 
+  const extractSize = (payload: any) => {
+    const stateOverride = payload.params?.[2];
+    if (!stateOverride) return srcBytes;
+    const decompressorCode = (Object.values(stateOverride)[0] as any).code;
+    const txData = payload.params[0].data;
+    return decompressorCode.length + txData.length;
+  };
+
   const sizes = {
-    jitBytes: extractPayloadSize(payloads.jit, srcBytes),
-    flzBytes: extractPayloadSize(payloads.flz, srcBytes),
-    cdBytes: extractPayloadSize(payloads.cd, srcBytes),
+    jitBytes: extractSize(payloads.jit),
+    flzBytes: extractSize(payloads.flz),
+    cdBytes: extractSize(payloads.cd),
   };
 
   const results = await Promise.all([
-    testMethod(payloads.jit, 'JIT', srcCd, txIndex),
-    testMethod(payloads.flz, 'FLZ', srcCd, txIndex),
-    testMethod(payloads.cd, 'CD', srcCd, txIndex),
+    testMethod(payloads.jit, 'JIT', srcCd, txIndex, tx.to),
+    testMethod(payloads.flz, 'FLZ', srcCd, txIndex, tx.to),
+    testMethod(payloads.cd, 'CD', srcCd, txIndex, tx.to),
   ]);
 
+  const failures: any[] = [];
+  if (!results[0].success) {
+    failures.push({
+      algorithm: 'jit',
+      expected: srcCd,
+      reconstructed: results[0].reconstructed,
+      error: results[0].error,
+      payload: payloads.jit,
+    });
+  }
+  if (!results[1].success) {
+    failures.push({
+      algorithm: 'flz',
+      expected: srcCd,
+      reconstructed: results[1].reconstructed,
+      error: results[1].error,
+      payload: payloads.flz,
+    });
+  }
+  if (!results[2].success) {
+    failures.push({
+      algorithm: 'cd',
+      expected: srcCd,
+      reconstructed: results[2].reconstructed,
+      error: results[2].error,
+      payload: payloads.cd,
+    });
+  }
+
   return {
+    transaction: tx,
+    txIndex,
     srcBytes,
     ...sizes,
     jitRatio: sizes.jitBytes / srcBytes,
@@ -157,12 +168,138 @@ const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> =
     jitGasUsed: results[0].gas,
     flzGasUsed: results[1].gas,
     cdGasUsed: results[2].gas,
+    failures: failures.length > 0 ? failures : undefined,
   };
 };
 
 import { describe, expect, test } from 'vitest';
 
 describe('JIT Compression Test Suite', () => {
+  test('should perform roundtrip smoke test on latest Base blocks', async () => {
+    const blocksFile = join(__dirname, 'fixture', 'base-blocks.json');
+    const cached = JSON.parse(readFileSync(blocksFile, 'utf8'));
+    const blocks = cached.blocks;
+    const MIN_CALLDATA_SIZE = 1150;
+    const allTransactions: Transaction[] = [];
+    for (const block of blocks) {
+      if (block.transactions && Array.isArray(block.transactions)) {
+        for (const tx of block.transactions) {
+          if (tx.to && tx.input && tx.input !== '0x' && tx.input.length >= MIN_CALLDATA_SIZE) {
+            allTransactions.push({
+              from: tx.from,
+              to: tx.to,
+              input: tx.input,
+            });
+          }
+        }
+      }
+    }
+
+    if (allTransactions.length === 0) return;
+
+    const results: any[] = [];
+    const successCnt = { jit: 0, flz: 0, cd: 0 };
+    const allFailures: any[] = [];
+
+    for (let i = 0; i < allTransactions.length; i++) {
+      const tx = allTransactions[i];
+      const metrics = await testTransaction(tx, i);
+
+      if (metrics) {
+        results.push(metrics);
+        if (metrics.jitRoundtripSuccess) successCnt.jit++;
+        if (metrics.flzRoundtripSuccess) successCnt.flz++;
+        if (metrics.cdRoundtripSuccess) successCnt.cd++;
+        if (metrics.failures) {
+          allFailures.push(...metrics.failures.map((f: any) => ({ ...f, txIndex: i })));
+        }
+      }
+    }
+
+    // Write failures to file if any
+    if (allFailures.length > 0) {
+      const failuresFile = join(__dirname, 'fixture', 'base-blocks-failures.json');
+      const failureReport = {
+        timestamp: new Date().toISOString(),
+        totalTested: results.length,
+        totalFailures: allFailures.length,
+        failures: allFailures.map((f) => {
+          const expectedLen = f.expected?.length || 0;
+          const reconstructedLen = f.reconstructed?.length || 0;
+          const lengthDiff = reconstructedLen - expectedLen;
+
+          // Find differences between expected and reconstructed
+          const differences: any[] = [];
+          if (f.expected && f.reconstructed) {
+            const maxLen = Math.max(expectedLen, reconstructedLen);
+            let diffStart = -1;
+            let diffEnd = -1;
+
+            for (let i = 0; i < maxLen; i++) {
+              if (f.expected[i] !== f.reconstructed[i]) {
+                if (diffStart === -1) diffStart = i;
+                diffEnd = i;
+              }
+            }
+
+            if (diffStart !== -1) {
+              differences.push({
+                position: diffStart,
+                length: diffEnd - diffStart + 1,
+                expectedSegment: f.expected.slice(Math.max(0, diffStart - 20), diffEnd + 20),
+                reconstructedSegment: f.reconstructed.slice(
+                  Math.max(0, diffStart - 20),
+                  diffEnd + 20,
+                ),
+              });
+            }
+          }
+
+          return {
+            txIndex: f.txIndex,
+            algorithm: f.algorithm,
+            error: f.error,
+            expectedLength: expectedLen,
+            reconstructedLength: reconstructedLen,
+            lengthDifference: lengthDiff,
+            differences,
+            expected: f.expected,
+            reconstructed: f.reconstructed,
+            compressedPayload: f.payload,
+          };
+        }),
+      };
+
+      writeFileSync(failuresFile, JSON.stringify(failureReport, null, 2), 'utf8');
+    }
+
+    // Print concise stats
+    const jitRatios = results.map((r) => r.jitRatio).filter((v) => v);
+    const flzRatios = results.map((r) => r.flzRatio).filter((v) => v);
+    const cdRatios = results.map((r) => r.cdRatio).filter((v) => v);
+    const jitGas = results.map((r) => Number(r.jitGasUsed)).filter((v) => v);
+    const flzGas = results.map((r) => Number(r.flzGasUsed)).filter((v) => v);
+    const cdGas = results.map((r) => Number(r.cdGasUsed)).filter((v) => v);
+    const srcSizes = results.map((r) => r.srcBytes).filter((v) => v);
+    const avgSrcSize = mean(srcSizes);
+
+    console.log(
+      `\n${results.length} txs | JIT: ${successCnt.jit} ✓ | FLZ: ${successCnt.flz} ✓ | CD: ${successCnt.cd} ✓`,
+    );
+    console.log(`Avg Src Size: ${avgSrcSize.toFixed(1)} bytes`);
+    console.log(
+      `Ratio: JIT ${(mean(jitRatios) * 100).toFixed(1)}% | FLZ ${(mean(flzRatios) * 100).toFixed(1)}% | CD ${(mean(cdRatios) * 100).toFixed(1)}%`,
+    );
+    console.log(
+      `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(cdGas).toFixed(0)}`,
+    );
+
+    expect(successCnt.jit, 'All JIT transactions should pass').toBe(results.length);
+    expect(successCnt.flz, 'All FLZ transactions should pass').toBe(results.length);
+    expect(successCnt.cd, 'All CD transactions should pass').toBe(results.length);
+    expect(results.length).toBeGreaterThan(0);
+  }, 60000);
+
   test('should not compress non-eth_call methods', () => {
     const payload = {
       method: 'eth_sendTransaction',
@@ -172,7 +309,7 @@ describe('JIT Compression Test Suite', () => {
 
     const result = compress_call(payload, 'jit');
     expect(result).toEqual(payload);
-    expect(result.stateDiff).toBeUndefined();
+    expect(result.params?.[2]).toBeUndefined();
   });
 
   test('should not compress eth_call below minimum size threshold', () => {
@@ -185,23 +322,16 @@ describe('JIT Compression Test Suite', () => {
 
     const result = compress_call(payload, 'jit');
     expect(result).toEqual(payload);
-    expect(result.stateDiff).toBeUndefined();
+    expect(result.params?.[2]).toBeUndefined();
   });
 
   test('should compress and decompress transactions correctly', async () => {
-    console.log('=== JIT Compression Test Suite ===\n');
-
     const testDataPath = join(__dirname, 'fixture', '36670119.raw.json');
-    expect(existsSync(testDataPath), 'Test data file should exist').toBe(true);
-
     const testData: TestData = JSON.parse(readFileSync(testDataPath, 'utf8'));
-    console.log(`Loaded ${testData.transactions.length} transactions from test data\n`);
 
     const txsWithCalldata = testData.transactions
       .map((tx, idx) => ({ tx, idx }))
-      .filter(({ tx }) => tx.input?.length > 2);
-
-    console.log(`Processing ${txsWithCalldata.length} transactions with non-empty calldata...\n`);
+      .filter(({ tx }) => tx.input?.length > 1150);
 
     const results: any[] = [];
     const successCnt = { jit: 0, flz: 0, cd: 0 };
@@ -215,64 +345,31 @@ describe('JIT Compression Test Suite', () => {
         if (metrics.jitRoundtripSuccess) successCnt.jit++;
         if (metrics.flzRoundtripSuccess) successCnt.flz++;
         if (metrics.cdRoundtripSuccess) successCnt.cd++;
-        process.stdout.write(`\rProcessing transaction ${i + 1}/${txsWithCalldata.length}...`);
       }
     }
 
-    console.log('\n');
+    // Print concise stats
+    const jitRatios = results.map((r) => r.jitRatio).filter((v) => v);
+    const flzRatios = results.map((r) => r.flzRatio).filter((v) => v);
+    const cdRatios = results.map((r) => r.cdRatio).filter((v) => v);
+    const jitGas = results.map((r) => Number(r.jitGasUsed)).filter((v) => v);
+    const flzGas = results.map((r) => Number(r.flzGasUsed)).filter((v) => v);
+    const cdGas = results.map((r) => Number(r.cdGasUsed)).filter((v) => v);
 
-    expect(results.length, 'Should generate compression metrics').toBeGreaterThan(0);
-
-    const formatSuccessRate = (cnt: number, total: number) =>
-      `✓ ${cnt}/${total} (${((cnt / total) * 100).toFixed(2)}%)`;
-
-    console.log('\n=== Roundtrip Validation Results (All Transactions) ===');
-    console.log(`Total transactions tested: ${results.length}`);
-    console.log(`JIT:  ${formatSuccessRate(successCnt.jit, results.length)}`);
-    console.log(`FLZ:  ${formatSuccessRate(successCnt.flz, results.length)}`);
-    console.log(`CD:   ${formatSuccessRate(successCnt.cd, results.length)}`);
-
-    const MIN_SIZE_THRESHOLD = 800;
-    const benchResults = results.filter((r) => r.srcBytes >= MIN_SIZE_THRESHOLD);
-
-    console.log(`\n=== Size Distribution ===`);
     console.log(
-      `Transactions >= ${MIN_SIZE_THRESHOLD} bytes (bench-relevant): ${benchResults.length}`,
+      `\n${results.length} txs | JIT: ${successCnt.jit} ✓ | FLZ: ${successCnt.flz} ✓ | CD: ${successCnt.cd} ✓`,
     );
     console.log(
-      `Transactions < ${MIN_SIZE_THRESHOLD} bytes (too small): ${results.length - benchResults.length}`,
+      `Ratio: JIT ${(mean(jitRatios) * 100).toFixed(1)}% | FLZ ${(mean(flzRatios) * 100).toFixed(1)}% | CD ${(mean(cdRatios) * 100).toFixed(1)}%`,
+    );
+    console.log(
+      `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(cdGas).toFixed(0)}`,
     );
 
-    console.log('\n=== Compression Statistics (bench-relevant Transactions Only) ===');
-    console.log(`Transactions analyzed: ${benchResults.length}\n`);
-
-    printStats('Original calldata size (bytes)', collect(benchResults, 'srcBytes'));
-    printStats('JIT bytecode ratio (compressed / original)', collect(benchResults, 'jitRatio'), 4);
-    printStats('flzCompress ratio (compressed / original)', collect(benchResults, 'flzRatio'), 4);
-    printStats('cdCompress ratio (compressed / original)', collect(benchResults, 'cdRatio'), 4);
-
-    console.log('\n=== Gas Usage Statistics (bench-relevant Transactions Only) ===');
-
-    printStats('JIT decompression gas', collectGas(benchResults, 'jitGasUsed'), 0);
-    printStats('FLZ decompression gas', collectGas(benchResults, 'flzGasUsed'), 0);
-    printStats('CD decompression gas', collectGas(benchResults, 'cdGasUsed'), 0);
-
-    const jitGas = collectGas(benchResults, 'jitGasUsed');
-    const flzGas = collectGas(benchResults, 'flzGasUsed');
-    const cdGas = collectGas(benchResults, 'cdGasUsed');
-
-    if (jitGas.length && flzGas.length && cdGas.length) {
-      console.log('\n=== Comparative Performance (Gas) ===');
-      printComparison('JIT vs FLZ', mean(jitGas)!, mean(flzGas)!);
-      printComparison('JIT vs CD', mean(jitGas)!, mean(cdGas)!);
-      printComparison('FLZ vs CD', mean(flzGas)!, mean(cdGas)!);
-    }
-
+    expect(results.length).toBeGreaterThan(0);
     expect(successCnt.jit, 'All JIT transactions should pass').toBe(results.length);
     expect(successCnt.flz, 'All FLZ transactions should pass').toBe(results.length);
     expect(successCnt.cd, 'All CD transactions should pass').toBe(results.length);
-
-    console.log('\nAll transactions passed all roundtrip validations!');
   }, 60000);
 });
 

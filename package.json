@@ -1,6 +1,6 @@
 {
   "name": "eth-compress",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": false,
   "type": "module",
   "description": "Client-to-server compression (viem-compatible) module for compressed, gas-efficient, low-latency eth_call requests.",
@@ -85,7 +85,8 @@
     "clean": "rm -rf dist *.tgz",
     "test:jit": "vitest run test/jit-compress.test.ts --config test/vitest.config.ts",
     "test:demo": "vitest run test/demo.test.ts --config test/vitest.config.ts",
-    "test": "pnpm run build && vitest run --config test/vitest.config.ts",
+    "test:viem": "vitest run test/viem-multicall.test.ts --config test/vitest.config.ts",
+    "test": "pnpm run build && pnpm run test:jit && pnpm run test:demo && pnpm run test:viem",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "format": "biome format --write .",
@@ -98,7 +99,7 @@
     "node": ">=22",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@10.20.0",
+  "packageManager": "pnpm@10.22.0",
   "pnpm": {
     "peerDependencyRules": {
       "ignoreMissing": [
@@ -110,16 +111,16 @@
     "solady": "0.1.26"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.3.5",
-    "@types/bun": "1.3.2",
-    "@types/node": "24.10.1",
-    "typescript": "5.9.3",
+    "@biomejs/biome": "2.3.6",
     "@ethereumjs/common": "10.1.0",
     "@ethereumjs/util": "10.1.0",
-    "viem": "2.39.0",
     "@ethereumjs/vm": "10.1.0",
-    "esbuild": "0.27.00",
-    "vitest": "4.0.9"
+    "@types/bun": "1.3.2",
+    "@types/node": "24.10.1",
+    "esbuild": "0.27.0",
+    "typescript": "5.9.3",
+    "viem": "2.39.3",
+    "vitest": "4.0.10"
   },
   "browserslist": [
     ">0.3%",

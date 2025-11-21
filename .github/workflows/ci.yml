@@ -35,7 +35,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
-          version: 10.20.0
+          version: 10.22.0
 
       - name: Setup Node 25
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
@@ -54,7 +54,7 @@ jobs:
       - name: Enable Corepack / pin pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@10.20.0 --activate
+          corepack prepare pnpm@10.22.0 --activate
           pnpm -v
 
       - name: Install deps (deterministic)

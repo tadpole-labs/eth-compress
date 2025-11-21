@@ -1,6 +1,6 @@
 import { LibZip } from 'solady';
 
-const MAX_160_BIT = (1n << 160n) - 1n;
+const MAX_160_BIT = (1n << 128n) - 1n;
 
 const _normHex = (hex: string): string => hex.replace(/^0x/, '').toLowerCase();
 
@@ -70,7 +70,6 @@ const _jitDecompressor = function (calldata: string): string {
   let ops: number[] = [];
   let data: (number[] | null)[] = [];
   let stack: bigint[] = [];
-  let stackFreq2 = new Map<bigint, number>();
   let trackedMemSize = 0;
   let mem = new Map<number, bigint>();
   const getStackIdx = (val: bigint): number => {
@@ -91,19 +90,20 @@ const _jitDecompressor = function (calldata: string): string {
   const pop2 = (): [bigint, bigint] => [stack.pop()!, stack.pop()!];
   const MASK32 = (1n << 256n) - 1n;
 
-  const bump = <K>(m: Map<K, number>, k: K) => m.set(k, (m.get(k) || 0) + 1);
+  const ctr = <K>(m: Map<K, number>, k: K, delta: number) => m.set(k, (m.get(k) || 0) + delta);
+  const inc = <K>(m: Map<K, number>, k: K) => ctr(m, k, 1);
+  const dec = <K>(m: Map<K, number>, k: K) => ctr(m, k, -1);
   const pushOp = (op: number) => {
     ops.push(op);
-    bump(opFreq, op);
+    inc(opFreq, op);
   };
   const pushD = (d: number[] | null) => {
     data.push(d || null);
-    bump(dataFreq, d || null);
+    inc(dataFreq, d || null);
   };
-  const pushS = (v: bigint) => {
+  const pushS = (v: bigint, freq: number = 1) => {
     stack.push(v);
-    bump(stackFreq, v);
-    bump(stackFreq2, v);
+    ctr(stackFreq, v, freq);
     ++pushCounter;
     stackCnt.set(v, pushCounter);
   };
@@ -113,40 +113,64 @@ const _jitDecompressor = function (calldata: string): string {
   };
 
   const addOp = (op: number, imm?: number[]) => {
-    if (op === 0x59) {
-      pushS(BigInt(trackedMemSize));
+    if (op === 0x36) {
+      pushS(32n, 0);
+    } else if (op === 0x59) {
+      pushS(BigInt(trackedMemSize), 0);
     } else if (op === 0x1b) {
-      // SHL
-      const [shift, val] = pop2();
-      pushS((val << shift) & MASK32);
+      let [shift, val] = pop2();
+      if (ops[ops.length - 1] == 144) {
+        ops.pop();
+        data.pop();
+        [shift, val] = [val, shift];
+      }
+      pushS((val << BigInt(shift)) & MASK32);
     } else if (op === 0x17) {
       // OR
       const [a, b] = pop2();
+      if (ops[ops.length - 1] == 144) {
+        ops.pop();
+        data.pop();
+      }
       pushS((a | b) & MASK32);
     } else if ((op >= 0x60 && op <= 0x7f) || op === 0x5f) {
       // PUSH
       let v = 0n;
       for (const b of imm || []) v = (v << 8n) | BigInt(b);
-      const idx = getStackIdx(v);
-      pushS(v);
-      if (idx !== -1 && op != 0x5f) {
-        if (stackFreq2.get(v)! * 2 < stackFreq.get(v)!) {
-          pushOp(128 + idx);
-          pushD(null);
-        }
-        return;
-      }
       if (v == 224n) {
         // Special‑case the literal 0xe0 (224):
         // the decompressor is always deployed at 0x...00e0, so the final
         // byte of ADDRESS is exactly 0xe0. Since we must send our own
-        // address with the eth_call anyway, we can synthesize this value 
+        // address with the eth_call anyway, we can synthesize this value
         // with a single opcode instead of encoding a literal, effectively
         // giving us one more hot constant slot on the stack.
+        pushS(v);
         pushOp(0x30); // ADDRESS
         pushD(null);
         return;
       }
+      const idx = getStackIdx(v);
+      if (idx !== -1 && op != 0x5f) {
+        const last = stackFreq.get(v) == 0;
+        if (idx == 0 && last) {
+          dec(stackFreq, v);
+          return;
+        }
+        if (idx == 1 && last) {
+          pushOp(144);
+          const [a, b] = pop2();
+          stack.push(b);
+          stack.push(a);
+          pushD(null);
+          dec(stackFreq, v);
+          return;
+        }
+        pushS(v, -1);
+        pushOp(128 + idx);
+        pushD(null);
+        return;
+      }
+      pushS(v);
     } else if (op === 0x51) {
       // MLOAD
       const k = Number(stack.pop()!);
@@ -168,10 +192,11 @@ const _jitDecompressor = function (calldata: string): string {
     pushOp(op);
     pushD(imm || null);
   };
-
+  const isInStack = (w) => stack.includes(w) || w == 0xe0 || w == 32n;
   const op = (opcode: number) => addOp(opcode);
   const pushN = (value: number | bigint) => {
     if (value > 0 && value === trackedMemSize) return addOp(0x59);
+    if (value == 32n) return addOp(0x36);
     if (!value) return addOp(0x5f, undefined); // PUSH0
     let v = BigInt(value);
     let bytes: number[] = [];
@@ -207,7 +232,7 @@ const _jitDecompressor = function (calldata: string): string {
   const emitPushN = (v: number | bigint) => (plan.push({ t: 'num', v }), pushN(v));
   const emitPushB = (b: Uint8Array) => (plan.push({ t: 'bytes', b }), pushB(b));
   const emitOp = (o: number) => (plan.push({ t: 'op', o }), op(o));
-
+  pushN(1n);
   // First pass: decide how to build each 32-byte word without emitting bytecode
   for (let base = 0; base < n; base += 32) {
     const word = new Uint8Array(32);
@@ -224,20 +249,11 @@ const _jitDecompressor = function (calldata: string): string {
 
     if (!seg.length) continue;
 
-    const byte8s = seg.every(({ s, e }) => s === e);
-    if (byte8s) {
-      for (const { s } of seg) {
-        emitPushN(word[s]);
-        emitPushN(base + s);
-        emitOp(0x53); // MSTORE8
-      }
-      continue;
-    }
-
     // Decide whether to build this word via SHL/OR or as a single literal word
     const literal = word.slice(seg[0].s);
     const literalCost = 1 + literal.length;
-
+    let literalVal = 0n;
+    for (const b of literal) literalVal = (literalVal << 8n) | BigInt(b);
     const baseBytes = Math.ceil(Math.log2(base + 1) / 8);
     const wordHex = _uint8ArrayToHex(word);
     if (literalCost > 8) {
@@ -257,7 +273,19 @@ const _jitDecompressor = function (calldata: string): string {
       }
     }
 
-    if (literalCost <= estShlCost(seg)) {
+    // Convert literal bytes to bigint for stack comparison
+
+    const byte8s = seg.every(({ s, e }) => s === e);
+    if (isInStack(literal)) {
+      emitPushB(literal);
+    } else if (byte8s) {
+      for (const { s } of seg) {
+        emitPushN(word[s]);
+        emitPushN(base + s);
+        emitOp(0x53); // MSTORE8
+      }
+      continue;
+    } else if (literalCost <= estShlCost(seg)) {
       emitPushB(literal);
     } else {
       let first = true;
@@ -281,20 +309,18 @@ const _jitDecompressor = function (calldata: string): string {
   stack = [];
   trackedMemSize = 0;
   mem = new Map();
-
   // Pre 2nd pass. Push most frequent literals into stack.
   Array.from(stackFreq.entries())
-    .filter(([val, freq]) => freq > 1 && val !== 0n && val !== 224n)
-    .filter(([val, _]) => {
-      return typeof val === 'number' ? val : Number(val) <= MAX_160_BIT;
-    })
+    .filter(([val, freq]) => freq > 1 && val > 1n && val !== 32n && val !== 224n)
     .sort((a, b) => stackCnt.get(b[0])! - stackCnt.get(a[0])!)
-    .slice(0, 14)
+    .filter(([val, _]) => {
+      return typeof val === 'number' ? BigInt(val) : val <= MAX_160_BIT;
+    })
+    .slice(0, 13)
     .forEach(([val, _]) => {
       pushN(val);
     });
-
-  stackFreq2 = new Map();
+  pushN(1n);
   // Second pass: emit ops and track mem/stack
   for (const step of plan) {
     if (step.t === 'num') pushN(step.v);
@@ -312,7 +338,6 @@ const _jitDecompressor = function (calldata: string): string {
   // - 0x5f35: PUSH0 CALLDATALOAD (address from calldata[0])
   // - 0x5a: GAS (remaining gas)
   // - 0xf1: CALL
-  // - 0x50: POP (discard success value)
   //
   // RETURNDATACOPY(destOffset=0, offset=0, length=RETURNDATASIZE):
   // - 0x3d5f5f3e: RETURNDATASIZE PUSH0 PUSH0 RETURNDATACOPY
@@ -334,10 +359,10 @@ const _jitDecompressor = function (calldata: string): string {
   // - CALLVALUE, load target address from calldata[0], GAS, CALL
   // - RETURNDATACOPY(0, 0, RETURNDATASIZE)
   // - RETURN(0, RETURNDATASIZE)
-  return '0x' + _uint8ArrayToHex(new Uint8Array(out)) + '345f355af1503d5f5f3e3d5ff3';
+  return '0x' + _uint8ArrayToHex(new Uint8Array(out)) + '345f355af13d5f5f3e3d5ff3';
 };
 
-const MIN_SIZE_FOR_COMPRESSION = 800;
+const MIN_SIZE_FOR_COMPRESSION = 1150;
 const DECOMPRESSOR_ADDRESS = '0x00000000000000000000000000000000000000e0';
 
 const _jit = 'jit';
@@ -357,19 +382,33 @@ export const compress_call = function (payload: any, alg?: string): any {
   const rpcMethod = payload.params?.[0]?.method || payload.method;
   if (rpcMethod && rpcMethod !== 'eth_call') return payload;
 
-  const hex = _normHex(payload.data || '0x');
-  const originalSize = (payload.data || '0x').length;
-  if (originalSize < MIN_SIZE_FOR_COMPRESSION) return payload;
+  // Extract data and target address from params[0] if available, otherwise top-level
+  const txObj = payload.params?.[0] || payload;
+  const blockParam = payload.params?.[1] || 'latest';
+  const existingStateOverride = payload.params?.[2] || {};
 
-  const targetAddress = payload.to || '';
+  // If there are any existing state overrides for the decompressor address, do not compress
+  const hex = _normHex(txObj.data || '0x');
+  const originalSize = (txObj.data || '0x').length;
+  if (originalSize < MIN_SIZE_FOR_COMPRESSION || (existingStateOverride[DECOMPRESSOR_ADDRESS])) return payload;
+
+  const targetAddress = txObj.to || '';
   const data = '0x' + hex;
 
   const autoSelect = !alg && originalSize < 1150;
   const flz = alg === _flz || autoSelect ? LibZip.flzCompress(data) : null;
   const cd = alg === _cd || autoSelect ? LibZip.cdCompress(data) : null;
-
-  const selectedMethod =
-    alg || (originalSize >= 1150 ? _jit : flz!.length < cd!.length ? _flz : _cd);
+  let selectedMethod = alg;
+  if (!selectedMethod) {
+    selectedMethod =
+      originalSize >= 1150 && (originalSize < 3000 || originalSize >= 8000)
+        ? _jit
+        : originalSize >= 3000 && originalSize < 8000
+          ? flz!.length < cd!.length
+            ? _flz
+            : _cd
+          : _cd;
+  }
 
   let bytecode: string;
   let calldata: string;
@@ -388,11 +427,17 @@ export const compress_call = function (payload: any, alg?: string): any {
 
   return {
     ...payload,
-    to: DECOMPRESSOR_ADDRESS,
-    data: calldata,
-    stateDiff: {
-      ...(payload.stateDiff || {}),
-      [DECOMPRESSOR_ADDRESS]: { code: bytecode },
-    },
+    params: [
+      {
+        ...txObj,
+        to: DECOMPRESSOR_ADDRESS,
+        data: calldata,
+      },
+      blockParam,
+      {
+        ...existingStateOverride,
+        [DECOMPRESSOR_ADDRESS]: { code: bytecode },
+      },
+    ],
   };
 };
