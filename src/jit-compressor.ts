@@ -1,6 +1,7 @@
 import { LibZip } from 'solady';
 
 const MAX_128_BIT = (1n << 128n) - 1n;
+const MAX_256_BIT = (1n << 256n) - 1n;
 
 const _normHex = (hex: string): string => hex.replace(/^0x/, '').toLowerCase();
 
@@ -20,6 +21,22 @@ const _uint8ArrayToHex = (bytes: Uint8Array): string => {
     hex += bytes[i].toString(16).padStart(2, '0');
   }
   return hex;
+};
+
+const not = (a: bigint): bigint => ~a & MAX_256_BIT;
+const and = (a: bigint, b: bigint): bigint => a & b & MAX_256_BIT;
+const or = (a: bigint, b: bigint): bigint => (a | b) & MAX_256_BIT;
+const xor = (a: bigint, b: bigint): bigint => (a ^ b) & MAX_256_BIT;
+const shl = (shift: bigint, value: bigint): bigint => (value << shift) & MAX_256_BIT;
+const shr = (shift: bigint, value: bigint): bigint => (value >> shift) & MAX_256_BIT;
+const sub = (a: bigint, b: bigint): bigint => (a - b) & MAX_256_BIT;
+const sigext = (byteSize: bigint, value: bigint): bigint => {
+  const numBytes = Number(byteSize) + 1;
+  const mask = (1n << BigInt(numBytes * 8)) - 1n;
+  const signBit = 1n << BigInt(numBytes * 8 - 1);
+  const maskedVal = value & mask;
+  const extended = maskedVal & signBit ? maskedVal | (~mask & MAX_256_BIT) : maskedVal;
+  return extended & MAX_256_BIT;
 };
 
 /**
@@ -62,9 +79,11 @@ const _jitDecompressor = function (calldata: string): string {
   let stack: bigint[] = [];
   let trackedMemSize = 0;
   let mem = new Map<number, bigint>();
+  let firstPass = true;
   const getStackIdx = (val: bigint): number => {
-    const idx = stack.lastIndexOf(val);
-    return idx === -1 ? -1 : stack.length - 1 - idx;
+    let idx = stack.lastIndexOf(val);
+    idx = idx === -1 ? -1 : stack.length - 1 - idx;
+    return idx > 15 ? -1 : idx;
   };
 
   const opFreq = new Map<number, number>();
@@ -76,7 +95,6 @@ const _jitDecompressor = function (calldata: string): string {
 
   let pushCounter = 0;
   const stackCnt = new Map<bigint, number>();
-
   const pop2 = (): [bigint, bigint] => [stack.pop()!, stack.pop()!];
   const MASK32 = (1n << 256n) - 1n;
 
@@ -107,56 +125,73 @@ const _jitDecompressor = function (calldata: string): string {
       pushS(32n, 0);
     } else if (op === 0x59) {
       pushS(BigInt(trackedMemSize), 0);
+    } else if (op === 0x0b) {
+      // SIGNEXTEND
+      const [byteSize, val] = pop2();
+      pushS(sigext(byteSize, val), 1);
+    } else if (op === 0x19) {
+      // NOT
+      const val = stack.pop()!;
+      pushS(not(val), 0);
+    } else if (op === 0x18) {
+      // XOR
+      const [a, b] = pop2();
+      pushS(xor(a, b), 1);
+    } else if (op === 0x16) {
+      // AND
+      const [a, b] = pop2();
+      pushS(and(a, b), 1);
+    } else if (op === 0x03) {
+      // SUB
+      const [a, b] = pop2();
+      pushS(sub(a, b), 1);
     } else if (op === 0x1b) {
+      // SHL
       let [shift, val] = pop2();
-      if (ops[ops.length - 1] == 144) {
-        ops.pop();
-        data.pop();
-        [shift, val] = [val, shift];
-      }
-      pushS((val << BigInt(shift)) & MASK32);
+      pushS(shl(shift, val), 1);
+    } else if (op === 0x1c) {
+      // SHR
+      let [shift, val] = pop2();
+      pushS(shr(shift, val), 1);
     } else if (op === 0x17) {
       // OR
-      const [a, b] = pop2();
-      if (ops[ops.length - 1] == 144) {
-        ops.pop();
-        data.pop();
-      }
-      pushS((a | b) & MASK32);
+      let [a, b] = pop2();
+      pushS(or(a, b), 1);
     } else if ((op >= 0x60 && op <= 0x7f) || op === 0x5f) {
       // PUSH
       let v = 0n;
       for (const b of imm || []) v = (v << 8n) | BigInt(b);
       if (v == 224n) {
-        // Special‑case the literal 0xe0 (224):
-        // the decompressor is always deployed at 0x...00e0, so the final
-        // byte of ADDRESS is exactly 0xe0. Since we must send our own
-        // address with the eth_call anyway, we can synthesize this value
-        // with a single opcode instead of encoding a literal, effectively
-        // giving us one more hot constant slot on the stack.
-        pushS(v);
+        pushS(v, 0);
         pushOp(0x30); // ADDRESS
+        pushD(null);
+        return;
+      }
+      if (v == 32n) {
+        pushS(v, 0);
+        pushOp(0x36); // ADDRESS
+        pushD(null);
+        return;
+      }
+      if (v === BigInt(trackedMemSize)) {
+        pushS(v, 0);
+        pushOp(0x59); // MemSize
         pushD(null);
         return;
       }
       const idx = getStackIdx(v);
       if (idx !== -1 && op != 0x5f) {
-        const last = stackFreq.get(v) == 0;
-        if (idx == 0 && last) {
-          dec(stackFreq, v);
-          return;
-        }
-        if (idx == 1 && last) {
-          pushOp(144);
-          const [a, b] = pop2();
-          stack.push(b);
-          stack.push(a);
-          pushD(null);
-          dec(stackFreq, v);
-          return;
-        }
-        pushS(v, -1);
+        let pushCtr = firstPass ? 1 : -1;
+        pushS(v, pushCtr);
         pushOp(128 + idx);
+        pushD(null);
+        return;
+      }
+      if (v == MAX_256_BIT) {
+        pushS(v);
+        pushOp(0x5f); // 0
+        pushOp(0x19); // NOT
+        pushD(null);
         pushD(null);
         return;
       }
@@ -182,7 +217,6 @@ const _jitDecompressor = function (calldata: string): string {
     pushOp(op);
     pushD(imm || null);
   };
-  const isInStack = (w) => stack.includes(w) || w == 0xe0 || w == 32n;
   const op = (opcode: number) => addOp(opcode);
   const pushN = (value: number | bigint) => {
     if (value > 0 && value === trackedMemSize) return addOp(0x59);
@@ -224,6 +258,7 @@ const _jitDecompressor = function (calldata: string): string {
   const emitOp = (o: number) => (plan.push({ t: 'op', o }), op(o));
   pushN(1n);
   // First pass: decide how to build each 32-byte word without emitting bytecode
+  const _stack = [1n, 32n, 224n];
   for (let base = 0; base < n; base += 32) {
     const word = new Uint8Array(32);
     word.set(buf.slice(base, Math.min(base + 32, n)), 0);
@@ -246,6 +281,15 @@ const _jitDecompressor = function (calldata: string): string {
     for (const b of literal) literalVal = (literalVal << 8n) | BigInt(b);
     const baseBytes = Math.ceil(Math.log2(base + 1) / 8);
     const wordHex = _uint8ArrayToHex(word);
+    const shlCost = estShlCost(seg);
+
+    const inStack = _stack.includes(literalVal);
+    if (inStack) {
+      emitPushB(literal);
+      emitPushN(base);
+      emitOp(0x52); // MSTORE
+      continue;
+    }
     if (literalCost > 8) {
       if (wordCache.has(wordHex)) {
         if (literalCost > wordCacheCost.get(wordHex)! + baseBytes) {
@@ -263,31 +307,134 @@ const _jitDecompressor = function (calldata: string): string {
       }
     }
 
-    // Convert literal bytes to bigint for stack comparison
-
     const byte8s = seg.every(({ s, e }) => s === e);
-    if (isInStack(literal)) {
-      emitPushB(literal);
-    } else if (byte8s) {
-      for (const { s } of seg) {
-        emitPushN(word[s]);
-        emitPushN(base + s);
-        emitOp(0x53); // MSTORE8
-      }
-      continue;
-    } else if (literalCost <= estShlCost(seg)) {
+    const byte8sCost = seg.length * 3; // each: PUSH1 (value), PUSH1 (offset), MSTORE8
+    if (inStack) {
       emitPushB(literal);
     } else {
-      let first = true;
-      for (const { s, e } of seg) {
-        const suffix0s = 31 - e;
-        emitPushB(word.slice(s, e + 1));
-        if (suffix0s > 0) {
-          emitPushN(suffix0s * 8);
-          emitOp(0x1b); // SHL
+      // Aggregate all costs
+      let bestCost = literalCost;
+      let bestEmit: (() => void) | null = () => {
+        emitPushB(literal);
+      };
+      if (literalVal == MAX_256_BIT) {
+        bestCost = 2;
+        bestEmit = () => {
+          emitPushN(notVal);
+          emitOp(0x19);
+        };
+      }
+      // Try NOT: PUSH<n> ~val, NOT
+      const notVal = not(literalVal);
+      let notBytes = 0;
+      let tmp = notVal;
+      while (tmp > 0n) {
+        notBytes++;
+        tmp >>= 8n;
+      }
+      notBytes = 1 + notBytes;
+      if (notBytes === 0) notBytes;
+      const notCost = notBytes + 1; // PUSH<n> + NOT
+      if (notCost < bestCost) {
+        bestCost = notCost;
+        bestEmit = () => {
+          emitPushN(notVal);
+          emitOp(0x19);
+        };
+      }
+
+      // Try SUB: PUSH1 0, PUSH<n> val, SUB
+      const subVal = sub(0n, literalVal);
+      let subBytes = 0;
+      tmp = subVal;
+      while (tmp > 0n) {
+        subBytes++;
+        tmp >>= 8n;
+      }
+      if (subBytes === 0) subBytes = 1;
+      if (_stack.includes(subVal)) subBytes = 1;
+      const subCost = 1 + (1 + subBytes) + 1; // PUSH0 + PUSH<n> + SUB
+      if (subCost < bestCost) {
+        bestCost = subCost;
+        bestEmit = () => {
+          emitPushN(0);
+          emitPushN(subVal);
+          emitOp(0x03);
+        };
+      }
+
+      // Try SIGNEXTEND: PUSH<n> truncated, PUSH1 byteSize, SIGNEXTEND
+      for (let numBytes = 1; numBytes < literal.length; numBytes++) {
+        const mask = (1n << BigInt(numBytes * 8)) - 1n;
+        const truncated = literalVal & mask;
+        const extended = sigext(BigInt(numBytes - 1), truncated);
+        if (extended === literalVal && (truncated & (1n << BigInt(numBytes * 8 - 1))) !== 0n) {
+          let trueByteCost = 1 + numBytes;
+          if (_stack.includes(BigInt(extended))) trueByteCost = 1;
+          let signCost = trueByteCost + (1 + 1) + 1; // PUSH<n> + PUSH1 + SIGNEXTEND
+          if (signCost < bestCost) {
+            bestCost = signCost;
+            bestEmit = () => {
+              emitPushN(truncated);
+              emitPushN(numBytes - 1);
+              emitOp(0x0b);
+            };
+          }
+          break;
         }
-        if (!first) emitOp(0x17); // OR
-        first = false;
+      }
+
+      // Try SHIFT+NOT: PUSH<n> val, PUSH1 shift, SHL, NOT
+      for (let shiftBits = 8; shiftBits <= 248; shiftBits += 8) {
+        const shifted = shr(BigInt(shiftBits), literalVal);
+        if (shifted === 0n) break;
+
+        const notShifted = not(shifted);
+        const reconstructed = shl(BigInt(shiftBits), notShifted);
+
+        if (reconstructed === literalVal) {
+          let shiftedBytes = 0;
+          let tmpShifted = notShifted;
+          while (tmpShifted > 0n) {
+            shiftedBytes++;
+            tmpShifted >>= 8n;
+          }
+          if (shiftedBytes === 0) shiftedBytes = 1;
+          const shiftNotCost = 1 + shiftedBytes + 2 + 1 + 1; // PUSH<n> + PUSH1 + SHL + NOT
+          if (shiftNotCost < bestCost) {
+            bestCost = shiftNotCost;
+            bestEmit = () => {
+              emitPushN(notShifted);
+              emitPushN(shiftBits);
+              emitOp(0x1b); // SHL
+              emitOp(0x19); // NOT
+            };
+          }
+        }
+      }
+
+      if (byte8s && byte8sCost < bestCost && byte8sCost <= shlCost) {
+        for (const { s } of seg) {
+          emitPushN(word[s]);
+          emitPushN(base + s);
+          emitOp(0x53); // MSTORE8
+        }
+        continue; // Skip the single MSTORE at the end
+      } else if (shlCost < bestCost) {
+        // Use SHL/OR
+        let first = true;
+        for (const { s, e } of seg) {
+          const suffix0s = 31 - e;
+          emitPushB(word.slice(s, e + 1));
+          if (suffix0s > 0) {
+            emitPushN(suffix0s * 8);
+            emitOp(0x1b); // SHL
+          }
+          if (!first) emitOp(0x17); // OR
+          first = false;
+        }
+      } else {
+        bestEmit!();
       }
     }
     emitPushN(base);
@@ -306,7 +453,7 @@ const _jitDecompressor = function (calldata: string): string {
     .filter(([val, _]) => {
       return typeof val === 'number' ? BigInt(val) : val <= MAX_128_BIT;
     })
-    .slice(0, 13)
+    .slice(0, 15)
     .forEach(([val, _]) => {
       pushN(val);
     });
@@ -375,7 +522,6 @@ const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 export const compress_call = function (payload: any, alg?: string): any {
   const { method, params } = payload;
   if (method && method !== 'eth_call') return payload;
-
   const txObj = params?.[0] || payload;
   const blockParam = params?.[1];
   const overrides = params?.[2];
