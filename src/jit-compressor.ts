@@ -96,18 +96,14 @@ const _jitDecompressor = function (calldata: string): string {
   let pushCounter = 0;
   const stackCnt = new Map<bigint, number>();
   const pop2 = (): [bigint, bigint] => [stack.pop()!, stack.pop()!];
-  const MASK32 = (1n << 256n) - 1n;
-
   const ctr = <K>(m: Map<K, number>, k: K, delta: number) => m.set(k, (m.get(k) || 0) + delta);
   const inc = <K>(m: Map<K, number>, k: K) => ctr(m, k, 1);
-  const dec = <K>(m: Map<K, number>, k: K) => ctr(m, k, -1);
-  const pushOp = (op: number) => {
+  const pushOp = (op: number, d?: number[] | null) => {
     ops.push(op);
     inc(opFreq, op);
-  };
-  const pushD = (d: number[] | null) => {
-    data.push(d || null);
-    inc(dataFreq, d || null);
+    const imm = d ?? null;
+    data.push(imm);
+    inc(dataFreq, imm);
   };
   const pushS = (v: bigint, freq: number = 1) => {
     stack.push(v);
@@ -164,19 +160,16 @@ const _jitDecompressor = function (calldata: string): string {
       if (v == 224n) {
         pushS(v, 0);
         pushOp(0x30); // ADDRESS
-        pushD(null);
         return;
       }
       if (v == 32n) {
         pushS(v, 0);
         pushOp(0x36); // ADDRESS
-        pushD(null);
         return;
       }
       if (v === BigInt(trackedMemSize)) {
         pushS(v, 0);
         pushOp(0x59); // MemSize
-        pushD(null);
         return;
       }
       const idx = getStackIdx(v);
@@ -184,15 +177,12 @@ const _jitDecompressor = function (calldata: string): string {
         let pushCtr = firstPass ? 1 : -1;
         pushS(v, pushCtr);
         pushOp(128 + idx);
-        pushD(null);
         return;
       }
       if (v == MAX_256_BIT) {
         pushS(v);
         pushOp(0x5f); // 0
         pushOp(0x19); // NOT
-        pushD(null);
-        pushD(null);
         return;
       }
       pushS(v);
@@ -204,7 +194,7 @@ const _jitDecompressor = function (calldata: string): string {
       // MSTORE
       const [offset, value] = pop2();
       const k = Number(offset);
-      mem.set(k, value & MASK32);
+      mem.set(k, value & MAX_256_BIT);
       trackMem(k, 32);
     } else if (op === 0x53) {
       // MSTORE8
@@ -214,8 +204,7 @@ const _jitDecompressor = function (calldata: string): string {
       // RETURN
       pop2();
     }
-    pushOp(op);
-    pushD(imm || null);
+    pushOp(op, imm || null);
   };
   const op = (opcode: number) => addOp(opcode);
   const pushN = (value: number | bigint) => {
@@ -329,7 +318,7 @@ const _jitDecompressor = function (calldata: string): string {
       let notBytes = 0;
       let tmp = notVal;
       while (tmp > 0n) {
-        notBytes++;
+        ++notBytes;
         tmp >>= 8n;
       }
       notBytes = 1 + notBytes;
@@ -348,7 +337,7 @@ const _jitDecompressor = function (calldata: string): string {
       let subBytes = 0;
       tmp = subVal;
       while (tmp > 0n) {
-        subBytes++;
+        ++subBytes;
         tmp >>= 8n;
       }
       if (subBytes === 0) subBytes = 1;
@@ -396,7 +385,7 @@ const _jitDecompressor = function (calldata: string): string {
           let shiftedBytes = 0;
           let tmpShifted = notShifted;
           while (tmpShifted > 0n) {
-            shiftedBytes++;
+            ++shiftedBytes;
             tmpShifted >>= 8n;
           }
           if (shiftedBytes === 0) shiftedBytes = 1;

@@ -26,6 +26,7 @@ interface TestData {
 const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
 
 const CALLER_ADDRESS = '0x9999999999999999999999999999999999999999';
+const COMPRESSION_THRESHOLD = 0.7;
 
 const testMethod = async (
   payload: any,
@@ -175,6 +176,70 @@ const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> =
 
 import { describe, expect, test } from 'vitest';
 
+const summarizeResults = (
+  results: any[],
+  successCnt: { jit: number; flz: number; cd: number },
+  opts?: { includeAvgSrcSize?: boolean },
+) => {
+  // For fair comparison, only consider samples where **all** algorithms
+  // produced compression better than the threshold. This ensures that
+  // no algorithm is advantaged by being evaluated on an easier subset.
+  const comparableResults = results.filter(
+    (r) =>
+      r.jitRatio < COMPRESSION_THRESHOLD &&
+      r.flzRatio < COMPRESSION_THRESHOLD &&
+      r.cdRatio < COMPRESSION_THRESHOLD,
+  );
+
+  const jitRatios = comparableResults.map((r) => r.jitRatio);
+  const flzRatios = comparableResults.map((r) => r.flzRatio);
+  const cdRatios = comparableResults.map((r) => r.cdRatio);
+
+  const jitGas = comparableResults
+    .map((r) => Number(r.jitGasUsed))
+    .filter((v) => v);
+  const flzGas = comparableResults
+    .map((r) => Number(r.flzGasUsed))
+    .filter((v) => v);
+  const cdGas = comparableResults
+    .map((r) => Number(r.cdGasUsed))
+    .filter((v) => v);
+
+  let avgSrcSize = 0;
+  if (opts?.includeAvgSrcSize) {
+    const srcSizes = results.map((r) => r.srcBytes).filter((v) => v);
+    avgSrcSize = mean(srcSizes);
+  }
+
+  console.log(
+    `\n${results.length} txs | JIT: \x1b[32m${successCnt.jit}\x1b[0m | FLZ: \x1b[32m${successCnt.flz}\x1b[0m | CD: \x1b[32m${successCnt.cd}\x1b[0m`,
+  );
+  if (opts?.includeAvgSrcSize && avgSrcSize) {
+    console.log(`Avg Src Size: ${avgSrcSize.toFixed(1)} bytes`);
+  }
+  console.log(
+    `Ratio (< ${COMPRESSION_THRESHOLD * 100}% on common sample set):\n JIT ${(mean(
+      jitRatios,
+    ) * 100).toFixed(
+      1,
+    )}% (${jitRatios.length}/${results.length}) | FLZ ${(mean(flzRatios) * 100).toFixed(
+      1,
+    )}% (${flzRatios.length}/${results.length}) | CD ${(mean(cdRatios) * 100).toFixed(
+      1,
+    )}% (${cdRatios.length}/${results.length})`,
+  );
+  console.log(
+    `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(
+      cdGas,
+    ).toFixed(0)}`,
+  );
+
+  expect(successCnt.jit, 'All JIT transactions should pass').toBe(results.length);
+  expect(successCnt.flz, 'All FLZ transactions should pass').toBe(results.length);
+  expect(successCnt.cd, 'All CD transactions should pass').toBe(results.length);
+  expect(results.length).toBeGreaterThan(0);
+};
+
 describe('JIT Compression Test Suite', () => {
   test('should perform roundtrip smoke test on latest Base blocks', async () => {
     const blocksFile = join(__dirname, 'fixture', 'base-blocks.json');
@@ -274,41 +339,7 @@ describe('JIT Compression Test Suite', () => {
       writeFileSync(failuresFile, JSON.stringify(failureReport, null, 2), 'utf8');
     }
 
-    const COMPRESSION_THRESHOLD = 0.95;
-    // Print concise stats (only for cases where compression was effective < COMPRESSION_THRESHOLD)
-    const jitRatios = results.map((r) => r.jitRatio).filter((v) => v && v < COMPRESSION_THRESHOLD);
-    const flzRatios = results.map((r) => r.flzRatio).filter((v) => v && v < COMPRESSION_THRESHOLD);
-    const cdRatios = results.map((r) => r.cdRatio).filter((v) => v && v < COMPRESSION_THRESHOLD);
-    const jitGas = results
-      .filter((r) => r.jitRatio < COMPRESSION_THRESHOLD)
-      .map((r) => Number(r.jitGasUsed))
-      .filter((v) => v);
-    const flzGas = results
-      .filter((r) => r.flzRatio < COMPRESSION_THRESHOLD)
-      .map((r) => Number(r.flzGasUsed))
-      .filter((v) => v);
-    const cdGas = results
-      .filter((r) => r.cdRatio < COMPRESSION_THRESHOLD)
-      .map((r) => Number(r.cdGasUsed))
-      .filter((v) => v);
-    const srcSizes = results.map((r) => r.srcBytes).filter((v) => v);
-    const avgSrcSize = mean(srcSizes);
-
-    console.log(
-      `\n${results.length} txs | JIT: \x1b[32m${successCnt.jit}\x1b[0m | FLZ: \x1b[32m${successCnt.flz}\x1b[0m | CD: \x1b[32m${successCnt.cd}\x1b[0m`,
-    );
-    console.log(`Avg Src Size: ${avgSrcSize.toFixed(1)} bytes`);
-    console.log(
-      `Ratio (< ${COMPRESSION_THRESHOLD * 100}%): JIT ${(mean(jitRatios) * 100).toFixed(1)}% (${jitRatios.length}/${results.length}) | FLZ ${(mean(flzRatios) * 100).toFixed(1)}% (${flzRatios.length}/${results.length}) | CD ${(mean(cdRatios) * 100).toFixed(1)}% (${cdRatios.length}/${results.length})`,
-    );
-    console.log(
-      `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(cdGas).toFixed(0)}`,
-    );
-
-    expect(successCnt.jit, 'All JIT transactions should pass').toBe(results.length);
-    expect(successCnt.flz, 'All FLZ transactions should pass').toBe(results.length);
-    expect(successCnt.cd, 'All CD transactions should pass').toBe(results.length);
-    expect(results.length).toBeGreaterThan(0);
+    summarizeResults(results, successCnt, { includeAvgSrcSize: true });
   }, 60000);
 
   test('should not compress non-eth_call methods', () => {
@@ -327,7 +358,6 @@ describe('JIT Compression Test Suite', () => {
     const payload = {
       method: 'eth_call',
       to: ECHO_CONTRACT_ADDRESS,
-      // Below MIN_SIZE_FOR_COMPRESSION
       data: '0x' + '00'.repeat(10),
     };
 
@@ -359,38 +389,7 @@ describe('JIT Compression Test Suite', () => {
       }
     }
 
-    // Print concise stats (only for cases where compression was effective < 0.95)
-    const COMPRESSION_THRESHOLD = 0.95;
-    const jitRatios = results.map((r) => r.jitRatio).filter((v) => v && v < COMPRESSION_THRESHOLD);
-    const flzRatios = results.map((r) => r.flzRatio).filter((v) => v && v < COMPRESSION_THRESHOLD);
-    const cdRatios = results.map((r) => r.cdRatio).filter((v) => v && v < COMPRESSION_THRESHOLD);
-    const jitGas = results
-      .filter((r) => r.jitRatio < COMPRESSION_THRESHOLD)
-      .map((r) => Number(r.jitGasUsed))
-      .filter((v) => v);
-    const flzGas = results
-      .filter((r) => r.flzRatio < COMPRESSION_THRESHOLD)
-      .map((r) => Number(r.flzGasUsed))
-      .filter((v) => v);
-    const cdGas = results
-      .filter((r) => r.cdRatio < COMPRESSION_THRESHOLD)
-      .map((r) => Number(r.cdGasUsed))
-      .filter((v) => v);
-
-    console.log(
-      `\n${results.length} txs | JIT: \x1b[32m${successCnt.jit}\x1b[0m | FLZ: \x1b[32m${successCnt.flz}\x1b[0m | CD: \x1b[32m${successCnt.cd}\x1b[0m`,
-    );
-    console.log(
-      `Ratio (< ${COMPRESSION_THRESHOLD * 100}%): JIT ${(mean(jitRatios) * 100).toFixed(1)}% (${jitRatios.length}/${results.length}) | FLZ ${(mean(flzRatios) * 100).toFixed(1)}% (${flzRatios.length}/${results.length}) | CD ${(mean(cdRatios) * 100).toFixed(1)}% (${cdRatios.length}/${results.length})`,
-    );
-    console.log(
-      `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(cdGas).toFixed(0)}`,
-    );
-
-    expect(results.length).toBeGreaterThan(0);
-    expect(successCnt.jit, 'All JIT transactions should pass').toBe(results.length);
-    expect(successCnt.flz, 'All FLZ transactions should pass').toBe(results.length);
-    expect(successCnt.cd, 'All CD transactions should pass').toBe(results.length);
+    summarizeResults(results, successCnt);
   }, 60000);
 });
 
