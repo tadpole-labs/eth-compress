@@ -1,3 +1,5 @@
+export const MIN_BODY_SIZE = 1150;
+
 const _sup_enc = new Map<string, string[] | -1>();
 const _enc = ['deflate-raw', 'deflate', 'gzip'];
 let supported: string | -1 | null = typeof CompressionStream === 'undefined' ? -1 : null;
@@ -57,9 +59,11 @@ export async function compressModule(
     }
   }
 
-  if (supported && supported !== -1 && init?.body) {
+  const bodyStr = typeof init?.body === 'string' ? (init.body as string) : null;
+
+  if (supported && supported !== -1 && bodyStr && bodyStr.length >= MIN_BODY_SIZE) {
     const compressed = await new Response(
-      new Blob([init.body as string])
+      new Blob([bodyStr])
         .stream()
         .pipeThrough(new CompressionStream(supported as CompressionFormat)),
     ).blob();

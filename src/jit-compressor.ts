@@ -1,4 +1,5 @@
 import { LibZip } from 'solady';
+import { MIN_BODY_SIZE } from './index';
 
 const MAX_128_BIT = (1n << 128n) - 1n;
 const MAX_256_BIT = (1n << 256n) - 1n;
@@ -488,9 +489,7 @@ const _jitDecompressor = function (calldata: string): string {
   return '0x' + _uint8ArrayToHex(new Uint8Array(out)) + '345f355af13d5f5f3e3d5ff3';
 };
 
-const MIN_SIZE_FOR_COMPRESSION = 1150;
 const DECOMPRESSOR_ADDRESS = '0x00000000000000000000000000000000000000e0';
-const MULTICALL3_ADDRESS = '0xca11bde05977b3631167028862be2a173976ca11';
 
 /**
  * Compresses eth_call payload using JIT, FastLZ (FLZ), or calldata RLE (CD) compression.
@@ -518,8 +517,7 @@ export const compress_call = function (payload: any, alg?: string): any {
   // Validation
   if (
     (blockParam && blockParam !== 'latest') ||
-    (overrides &&
-      Object.keys(overrides).some((k) => k.toLowerCase() !== MULTICALL3_ADDRESS.toLowerCase())) ||
+    (overrides && Object.keys(overrides).length > 0) ||
     !txObj?.to ||
     !txObj?.data ||
     Object.keys(txObj).some((k) => !['to', 'data', 'from'].includes(k))
@@ -528,7 +526,7 @@ export const compress_call = function (payload: any, alg?: string): any {
   }
 
   const originalSize = txObj.data.length;
-  if (originalSize < MIN_SIZE_FOR_COMPRESSION) return payload;
+  if (originalSize < MIN_BODY_SIZE) return payload;
 
   const inputData = '0x' + _normHex(txObj.data);
   const to = txObj.to;

@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
+import { MIN_BODY_SIZE } from '../src/index';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -195,15 +196,9 @@ const summarizeResults = (
   const flzRatios = comparableResults.map((r) => r.flzRatio);
   const cdRatios = comparableResults.map((r) => r.cdRatio);
 
-  const jitGas = comparableResults
-    .map((r) => Number(r.jitGasUsed))
-    .filter((v) => v);
-  const flzGas = comparableResults
-    .map((r) => Number(r.flzGasUsed))
-    .filter((v) => v);
-  const cdGas = comparableResults
-    .map((r) => Number(r.cdGasUsed))
-    .filter((v) => v);
+  const jitGas = comparableResults.map((r) => Number(r.jitGasUsed)).filter((v) => v);
+  const flzGas = comparableResults.map((r) => Number(r.flzGasUsed)).filter((v) => v);
+  const cdGas = comparableResults.map((r) => Number(r.cdGasUsed)).filter((v) => v);
 
   let avgSrcSize = 0;
   if (opts?.includeAvgSrcSize) {
@@ -218,11 +213,9 @@ const summarizeResults = (
     console.log(`Avg Src Size: ${avgSrcSize.toFixed(1)} bytes`);
   }
   console.log(
-    `Ratio (< ${COMPRESSION_THRESHOLD * 100}% on common sample set):\n JIT ${(mean(
-      jitRatios,
-    ) * 100).toFixed(
-      1,
-    )}% (${jitRatios.length}/${results.length}) | FLZ ${(mean(flzRatios) * 100).toFixed(
+    `Ratio (< ${COMPRESSION_THRESHOLD * 100}% on common sample set):\n JIT ${(
+      mean(jitRatios) * 100
+    ).toFixed(1)}% (${jitRatios.length}/${results.length}) | FLZ ${(mean(flzRatios) * 100).toFixed(
       1,
     )}% (${flzRatios.length}/${results.length}) | CD ${(mean(cdRatios) * 100).toFixed(
       1,
@@ -245,12 +238,11 @@ describe('JIT Compression Test Suite', () => {
     const blocksFile = join(__dirname, 'fixture', 'base-blocks.json');
     const cached = JSON.parse(readFileSync(blocksFile, 'utf8'));
     const blocks = cached.blocks;
-    const MIN_CALLDATA_SIZE = 1150;
     const allTransactions: Transaction[] = [];
     for (const block of blocks) {
       if (block.transactions && Array.isArray(block.transactions)) {
         for (const tx of block.transactions) {
-          if (tx.to && tx.input && tx.input !== '0x' && tx.input.length >= MIN_CALLDATA_SIZE) {
+          if (tx.to && tx.input && tx.input !== '0x' && tx.input.length >= MIN_BODY_SIZE) {
             allTransactions.push({
               from: tx.from,
               to: tx.to,
@@ -372,7 +364,7 @@ describe('JIT Compression Test Suite', () => {
 
     const txsWithCalldata = testData.transactions
       .map((tx, idx) => ({ tx, idx }))
-      .filter(({ tx }) => tx.input?.length > 1150);
+      .filter(({ tx }) => tx.input?.length > MIN_BODY_SIZE);
 
     const results: any[] = [];
     const successCnt = { jit: 0, flz: 0, cd: 0 };

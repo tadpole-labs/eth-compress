@@ -1,6 +1,6 @@
 import zlib from 'node:zlib';
 
-// Polyfill for CompressionStream/DecompressionStream in Node.js
+// Polyfill for CompressionStream/DecompressionStream in older versions of Node.js & Bun
 const make = (ctx: any, handle: any) =>
   Object.assign(ctx, {
     writable: new WritableStream({

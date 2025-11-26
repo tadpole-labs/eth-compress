@@ -8,9 +8,9 @@ _Plug'n Play with viem & with a simple API_
 
 ### Scope
   - **Only read-only `eth_call`'s are considered**
-  - Compression is only attempted above a size threshold (currently 800 bytes), and only applied if it strictly reduces total request size.
-  - The transform re-targets the call through a decompressor contract and forwards calldata to the original `to` address.
-  - For reference: Large eth_call's >70kb at a <40% compression ratio result in roughly 30-40% latency reduction. (precise benefits largely depend on a variety of factors, non-the-less the said estimate is a sane projection for the average case)
+  - Compression is only attempted above a size threshold (currently 1150 bytes of JSON body for HTTP compression, and similarly gated for JIT calldata compression), and only applied if it strictly reduces total request size.
+  - The HTTP path uses standard `Content-Encoding` (e.g. gzip/deflate) negotiation; the EVM path rewrites eligible `eth_call`s through a transient decompressor contract and forwards calldata to the original `to` address via state overrides.
+  - For reference: Large `eth_call`s >70kb that compress to about **40% smaller payload size** (i.e. ~60% of the original bytes on the wire) can see roughly 30–40% latency reduction. (Precise benefits depend on many factors; this is a reasonable average-case projection.)
 
 ### Installation
 
@@ -18,9 +18,9 @@ _Plug'n Play with viem & with a simple API_
 npm i eth-compress
 ```
 ---
-### HTTP request compression
+### HTTP request compression (transport-level)
 
-`eth-compress` exposes a `fetch`-compatible function that transparently compresses JSON-RPC request bodies using standard HTTP content-encoding.
+`eth-compress` exposes a `fetch`-compatible function that transparently compresses JSON-RPC request bodies using the CompressionStreams API, when the target RPC endpoint supports it and the payload is large enough to benefit.
 
 ```ts
 import { compressModule } from 'eth-compress';
@@ -56,7 +56,7 @@ import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
 import { compressModule, compressModuleWithJIT } from 'eth-compress';
 
-// HTTP compression only
+// HTTP compression only (transport-level)
 const httpCompressedClient = createPublicClient({
   chain: base,
   transport: http(rpcUrl, {
@@ -64,7 +64,7 @@ const httpCompressedClient = createPublicClient({
   }),
 });
 
-// HTTP compression + eth_call JIT calldata compression
+// HTTP compression + optional eth_call JIT calldata compression (application-level)
 const jitCompressedClient = createPublicClient({
   chain: base,
   transport: http(rpcUrl, {
@@ -82,9 +82,9 @@ const jitCompressedClient = createPublicClient({
 
 ----
 
-### eth_call JIT calldata compression
+### eth_call JIT calldata compression (application-level)
 
-For backwards compatibility and immediate benefit, calldata compression is implemented on the application layer: requests are rewritten client-side and executed as usual by existing nodes.
+For backwards compatibility and immediate benefit, calldata compression is implemented purely at the application layer: requests are rewritten client-side and executed as usual by existing nodes, using a just-in-time compiled decompressor contract that is injected via `stateOverride`/`stateDiff`.
 The goal here is the same: **reduce request size -> latency** for large `eth_call` payloads, and secondarily to **stay under eth_call gas/memory limits** by reducing calldata size and gas footprint.
 
 ```ts
@@ -104,7 +104,7 @@ const payload = {
 const compressedPayload = compress_call(payload); // safe to send instead of `payload`
 ```
 
-`compress_call` can be used directly or via `compressModuleWithJIT` (which feeds it into `compressModule` as a payload transform).
+`compress_call` can be used directly or via `compressModuleWithJIT` (which feeds it into `compressModule` as a payload transform when HTTP content-encoding is not available for the target URL).
 For eligible `eth_call`s it chooses between:
 
 - **JIT**: Compiles just-in-time, a one-off decompressor contract that reconstructs calldata to forward the call.
@@ -112,11 +112,11 @@ For eligible `eth_call`s it chooses between:
 
 Selection logic (subject to change, but current behaviour):
 
-- **Size gating**:
-  - `< 1150 bytes`: no compression.
+- **Size gating (JIT / EVM path)**:
+  - `< 1150 bytes (effective payload)`: no EVM-level compression.
   - `≥ 1150 bytes`: compression considered.
-  - `3000 ≥ 1150 bytes or > 8000`: JIT is preferred.
-  - `8000 ≥ size ≥ 3000`: FastLZ or RLE.
+  - `size ≤ ~3000 bytes or > ~8000 bytes`: JIT is preferred.
+  - `~3000 ≤ size ≤ ~8000 bytes`: FastLZ or RLE.
 
 - **Algorithm choice**:
   - For mid-sized payloads, FLZ and CD are tried and the smaller output is chosen.
@@ -125,8 +125,21 @@ Selection logic (subject to change, but current behaviour):
   aiming to keep the total request size within the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
 
 
+> **Important considerations**
+>
+> The JIT calldata compressor is **experimental** and targets efficient compression of **read-only `eth_call`s for auxiliary dApp data loaded in bulk** (e.g. dashboards, analytics, non-critical views). It is **not recommended** for on-chain deployment or for critical paths in dApp flows that directly influence user operations. For separation of concerns, it is recommended to initialize **one client for auxiliary data** (with JIT compression enabled) and **another client for user operations**, and perform a separate requests for user‑facing operations.
+
+
 ### Implementation notes & compression flavours
-- **JIT calldata compiler (`compress_call` JIT mode)**: Views the calldata as a zero‑initialized memory image and synthesises bytecode that rebuilds it word-by-word in-place. In the first pass it walks the data in 32-byte slices, detects non-zero segments per word, and for each word chooses the cheapest of three strategies: store a literal tail, assemble segments using SHL/OR, or reuse an earlier word via MLOAD/MSTORE, under a rough opcode-count cost model. In the second pass it materialises this plan into concrete PUSH/MSTORE/SHL/OR/DUP opcodes, pre-seeds the stack with frequently used constants, and appends a small CALL/RETURNDATA stub that forwards the reconstructed calldata to the original `to` address. The execution is realized through a `stateDiff` passed together with the eth_call. The 4‑byte selector is right‑aligned in the first 32‑byte slot so that the rest of the calldata can be reconstructed on mostly word‑aligned boundaries, with the decompressor stateDiff being placed at `0x00000000000000000000000000000000000000e0` such that `0xe0` can be obtained from `ADDRESS` with a single opcode instead of an explicit literal. Achieves higher compression ratios compared to both FastLZ & Run-Length-Encoding (-10-15%) for smaller calldata <3kb, and roughly on par above 8kb (except in cases with deeply nested calls and types, minimally worse), at a fraction of the gas footprint (<5%).
+- **JIT calldata compiler (`compress_call` JIT mode)**: Views the calldata as a zero‑initialized memory image and synthesises bytecode that rebuilds it word-by-word in-place.
+
+  In the first pass it walks the data in 32-byte slices, detects non-zero segments per word, and for each word chooses the cheapest of three strategies: store a literal tail, assemble segments using SHL/OR, or reuse an earlier word via MLOAD/MSTORE, under a rough opcode-count cost model.
+  
+  In the second pass it materialises this plan into concrete PUSH/MSTORE/SHL/OR/DUP opcodes, pre-seeds the stack with frequently used constants, and appends a small CALL/RETURNDATA stub that forwards the reconstructed calldata to the original `to` address.
+  
+  The execution is realized through a `stateDiff` passed together with the `eth_call`. The 4‑byte selector is right‑aligned in the first 32‑byte slot so that the rest of the calldata can be reconstructed on mostly word‑aligned boundaries, with the decompressor stateDiff being placed at `0x00000000000000000000000000000000000000e0` such that `0xe0` can be obtained from `ADDRESS` with a single opcode instead of an explicit literal.
+  
+  Achieves higher compression ratios compared to both FastLZ & Run-Length-Encoding (around 10–15% **smaller payloads**) for smaller calldata <3kb, and on par above 8kb (except in cases with deeply nested calls and types, minimally worse), at a fraction of the gas footprint (<5%).
 
 - **FastLZ path (`LibZip.flzCompress` / `flzDecompress`)**: Implements a minimal LZ77-style compressor over raw bytes with a 3-byte rolling window. Each 24-bit chunk is hashed into a tiny table; repeated substrings within a bounded look-back distance are emitted as (length, distance) match tokens, and everything else is emitted as literal runs. Decompression is a simple loop over this stream that copies literals and then copies `length` bytes from `distance` bytes back in the already-produced output.
 

@@ -333,46 +333,6 @@ describe('Viem Multicall with JIT Compression', () => {
     console.log('\x1b[32mPASS\x1b[0m State override rejection test - compression skipped');
   });
 
-  test('should compress when state override contains only Multicall3', async () => {
-    const { compress_call } = await import('../dist/_esm/jit-compressor.js');
-
-    const largeCalldata = '0x' + 'ab'.repeat(600);
-    const multicallAddress = '0xcA11bde05977b3631167028862bE2a173976CA11';
-
-    const existingOverrides = {
-      [multicallAddress]: {
-        code: '0x1234',
-      },
-    };
-
-    const payload = {
-      method: 'eth_call',
-      params: [
-        {
-          to: '0x3333333333333333333333333333333333333333',
-          data: largeCalldata,
-        },
-        'latest',
-        existingOverrides,
-      ],
-    };
-
-    const result = compress_call(payload, 'jit');
-
-    // Should compress
-    expect(result).not.toBe(payload);
-    expect(result.params[0].to).toBe('0x00000000000000000000000000000000000000e0'); // Decompressor address
-
-    // Verify overrides are merged
-    const resultOverrides = result.params[2];
-    expect(resultOverrides[multicallAddress]).toEqual(existingOverrides[multicallAddress]);
-    expect(resultOverrides['0x00000000000000000000000000000000000000e0']).toBeDefined();
-
-    console.log(
-      '\x1b[32mPASS\x1b[0m Multicall3 override test - compression applied and overrides merged',
-    );
-  });
-
   test('should not compress when decompressor address has existing override', async () => {
     // Import the compress_call function
     const { compress_call } = await import('../dist/_esm/jit-compressor.js');
