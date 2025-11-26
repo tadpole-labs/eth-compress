@@ -26,3 +26,4 @@ _types
 test/fixture/proxy-request*.json
 test/fixture/proxy-response*.json
 test/fixture/base-blocks-*.json
+test/fixture/base-blocks-success-*.json

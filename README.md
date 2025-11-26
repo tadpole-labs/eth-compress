@@ -125,9 +125,10 @@ Selection logic (subject to change, but current behaviour):
   aiming to keep the total request size within the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
 
 
-> **Important considerations**
->
-> The JIT calldata compressor is **experimental** and targets efficient compression of **read-only `eth_call`s for auxiliary dApp data loaded in bulk** (e.g. dashboards, analytics, non-critical views). It is **not recommended** for on-chain deployment or for critical paths in dApp flows that directly influence user operations. For separation of concerns, it is recommended to initialize **one client for auxiliary data** (with JIT compression enabled) and **another client for user operations**, and perform a separate requests for user‑facing operations.
+
+### Important considerations
+
+The JIT calldata compressor is **experimental** and targets efficient compression of **read-only `eth_call`s for auxiliary dApp data loaded in bulk** (e.g. dashboards, analytics, non-critical views). It is **not recommended** for on-chain deployment or for critical paths in dApp flows that directly influence user operations. For separation of concerns, it is recommended to initialize **one client for auxiliary data** (with JIT compression enabled) and **another client for user operations**, and perform a separate requests for user‑facing operations.
 
 
 ### Implementation notes & compression flavours
