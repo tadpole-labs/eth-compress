@@ -1,7 +1,7 @@
 export const MIN_BODY_SIZE = 1150;
 
 const _sup_enc = new Map<string, string[] | -1>();
-const _enc = ['deflate-raw', 'deflate', 'gzip'];
+const _enc = ['gzip', 'deflate'];
 let supported: string | -1 | null = typeof CompressionStream === 'undefined' ? -1 : null;
 
 export type PayloadTransform = (payload: unknown) => unknown;
@@ -36,20 +36,20 @@ export async function compressModule(
 ): Promise<Response> {
   const url =
     typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-
   const cached = _sup_enc.get(url);
   supported = supported === -1 ? -1 : cached === -1 ? -1 : (cached?.[0] ?? null);
 
+  let opts = { ...init, priority: 'high' as RequestPriority };
   // Only apply the optional payload transform
   // when native HTTP compression is not available for this URL.
-  if (transformPayload && init?.body && typeof init.body === 'string') {
+  if (transformPayload && opts?.body && typeof opts.body === 'string') {
     if (supported === -1 || supported === null) {
       try {
-        const parsed = JSON.parse(init.body as string);
+        const parsed = JSON.parse(opts.body as string);
         const next = transformPayload(parsed);
         if (next !== undefined) {
-          init = {
-            ...init,
+          opts = {
+            ...opts,
             body: JSON.stringify(next),
           };
         }
@@ -59,7 +59,7 @@ export async function compressModule(
     }
   }
 
-  const bodyStr = typeof init?.body === 'string' ? (init.body as string) : null;
+  const bodyStr = typeof opts?.body === 'string' ? (opts.body as string) : null;
 
   if (supported && supported !== -1 && bodyStr && bodyStr.length >= MIN_BODY_SIZE) {
     const compressed = await new Response(
@@ -67,13 +67,13 @@ export async function compressModule(
         .stream()
         .pipeThrough(new CompressionStream(supported as CompressionFormat)),
     ).blob();
-    init = {
-      ...init,
+    opts = {
+      ...opts,
       body: compressed,
-      headers: { ...(init && init.headers), 'Content-Encoding': supported },
+      headers: { ...(opts && opts.headers), 'Content-Encoding': supported, ...((opts?.headers && 'Accept-Language' in opts.headers) ? { 'Accept-Language': '*' } : {}) },
     };
   }
-  const response = await fetch(url, init);
+  const response = await fetch(url, opts);
 
   if (supported === null) {
     const encodings = response.headers
