@@ -3,14 +3,12 @@ import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { compressModule, compressModuleWithJIT } from '../dist/_esm/index.node.js';
-import { BASE_RPC_URL } from './utils.js';
-
-const rpcURL = 'http://localhost:42069';
+import { BASE_RPC_URL, PROXY_URL, loadFixture } from './utils';
 
 let proxyServer;
 
 beforeAll(async () => {
-  proxyServer = spawn('node', ['test/proxy-server.js'], {
+  proxyServer = spawn('bun', ['test/proxy-server.ts'], {
     stdio: 'inherit',
   });
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -23,7 +21,7 @@ afterAll(() => {
 test('compressionFetch with viem - getBlockNumber', async () => {
   const client = createPublicClient({
     chain: base,
-    transport: http(rpcURL, {
+    transport: http(PROXY_URL, {
       fetchFn: compressModule,
     }),
   });
@@ -38,7 +36,7 @@ test('compressionFetch with viem - getBlockNumber', async () => {
 test('compressionFetch with viem - getBlock', async () => {
   const client = createPublicClient({
     chain: base,
-    transport: http(rpcURL, {
+    transport: http(PROXY_URL, {
       fetchFn: compressModule,
     }),
   });
@@ -72,17 +70,8 @@ test('compressionFetch with public Base RPC (no compression support)', async () 
 });
 
 test('eth_call JIT compression demo using compressModule + viem', async () => {
-  // Read test data and find the transaction with the biggest calldata
-  const { readFileSync } = await import('fs');
-  const { join } = await import('path');
-  const { fileURLToPath } = await import('url');
   const { compress_call } = await import('../dist/_esm/jit-compressor.js');
-  const testDataPath = join(
-    join(fileURLToPath(import.meta.url), '..'),
-    'fixture',
-    '36670119.raw.json',
-  );
-  const testData = JSON.parse(readFileSync(testDataPath, 'utf8'));
+  const testData = loadFixture('36670119.raw.json');
 
   let bigTx = testData.transactions[0];
   for (const tx of testData.transactions) {
@@ -90,7 +79,6 @@ test('eth_call JIT compression demo using compressModule + viem', async () => {
   }
 
   const { from, to, input: data } = bigTx;
-  // Properly structure the RPC payload with method and params
   const testPayload = {
     method: 'eth_call',
     params: [{ to, data }],
@@ -110,7 +98,6 @@ test('eth_call JIT compression demo using compressModule + viem', async () => {
   let algorithm = 'none (not beneficial or too small)';
   if (decompressorOverride) {
     const bytecode = decompressorOverride.code;
-    // JIT decompressor ends with the specific suffix
     if (bytecode.endsWith('345f355af13d5f5f3e3d5ff3')) {
       algorithm = 'JIT';
     } else if (bytecode.startsWith('0x365f73')) {

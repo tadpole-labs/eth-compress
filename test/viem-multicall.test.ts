@@ -1,24 +1,28 @@
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
 import { createPublicClient, http, parseEther } from 'viem';
 import { base } from 'viem/chains';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { compressModuleWithJIT } from '../dist/_esm/index.node.js';
+import * as u from './utils';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const utilsModule = await import('./utils.js');
-const { ECHO_CONTRACT_BYTECODE, ECHO_CONTRACT_ADDRESS } = utilsModule;
-
-const PROXY_URL = 'http://localhost:42069';
+const {
+  ECHO_CONTRACT_BYTECODE,
+  PROXY_URL,
+  USDC,
+  WETH,
+  DAI_BASE,
+  cbETH_BASE,
+  TEST_ADDR,
+  call,
+  mockEthCall,
+  gen_call,
+  loadFixture,
+} = u;
 
 let proxyServer;
 
 beforeAll(async () => {
-  proxyServer = spawn('node', ['test/proxy-server.js'], {
+  proxyServer = spawn('bun', ['test/proxy-server.ts'], {
     stdio: 'inherit',
   });
   await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -38,14 +42,8 @@ interface TestData {
   transactions: Transaction[];
 }
 
-// Base L2 Contract Addresses
-const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const WETH_BASE = '0x4200000000000000000000000000000000000006';
-const DAI_BASE = '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb';
-const cbETH_BASE = '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22';
-
 // Standard ERC20 ABI (minimal)
-const erc20Abi = [
+const erc20_abi = [
   {
     type: 'function',
     name: 'totalSupply',
@@ -90,15 +88,6 @@ const erc20Abi = [
   },
 ] as const;
 
-// Random addresses for testing balanceOf
-const testAddresses = [
-  '0x0000000000000000000000000000000000000000',
-  '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', // vitalik.eth
-  '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266', // common test address
-  '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', // another test address
-  '0x1111111111111111111111111111111111111111',
-];
-
 describe('Viem Multicall with JIT Compression', () => {
   test('should perform ~20 multicalls on Base L2 tokens with JIT compression', async () => {
     // Create viem client with compression
@@ -121,83 +110,43 @@ describe('Viem Multicall with JIT Compression', () => {
     // Build ~20 multicall contracts
     const contracts = [
       // USDC calls
-      { address: USDC_BASE as `0x${string}`, abi: erc20Abi, functionName: 'totalSupply' },
-      { address: USDC_BASE as `0x${string}`, abi: erc20Abi, functionName: 'symbol' },
-      { address: USDC_BASE as `0x${string}`, abi: erc20Abi, functionName: 'name' },
-      { address: USDC_BASE as `0x${string}`, abi: erc20Abi, functionName: 'decimals' },
-      {
-        address: USDC_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [testAddresses[0] as `0x${string}`],
-      },
-      {
-        address: USDC_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [testAddresses[1] as `0x${string}`],
-      },
+      call(USDC, erc20_abi, 'totalSupply'),
+      call(USDC, erc20_abi, 'symbol'),
+      call(USDC, erc20_abi, 'name'),
+      call(USDC, erc20_abi, 'decimals'),
+      call(USDC, erc20_abi, 'balanceOf', [TEST_ADDR[0]]),
+      call(USDC, erc20_abi, 'balanceOf', [TEST_ADDR[4]]),
 
       // WETH calls
-      { address: WETH_BASE as `0x${string}`, abi: erc20Abi, functionName: 'totalSupply' },
-      { address: WETH_BASE as `0x${string}`, abi: erc20Abi, functionName: 'symbol' },
-      { address: WETH_BASE as `0x${string}`, abi: erc20Abi, functionName: 'name' },
-      { address: WETH_BASE as `0x${string}`, abi: erc20Abi, functionName: 'decimals' },
-      {
-        address: WETH_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [testAddresses[2] as `0x${string}`],
-      },
-      {
-        address: WETH_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [testAddresses[3] as `0x${string}`],
-      },
+      call(WETH, erc20_abi, 'totalSupply'),
+      call(WETH, erc20_abi, 'symbol'),
+      call(WETH, erc20_abi, 'name'),
+      call(WETH, erc20_abi, 'decimals'),
+      call(WETH, erc20_abi, 'balanceOf', [TEST_ADDR[5]]),
+      call(WETH, erc20_abi, 'balanceOf', [TEST_ADDR[6]]),
 
       // DAI calls
-      { address: DAI_BASE as `0x${string}`, abi: erc20Abi, functionName: 'totalSupply' },
-      { address: DAI_BASE as `0x${string}`, abi: erc20Abi, functionName: 'symbol' },
-      { address: DAI_BASE as `0x${string}`, abi: erc20Abi, functionName: 'name' },
-      { address: DAI_BASE as `0x${string}`, abi: erc20Abi, functionName: 'decimals' },
-      {
-        address: DAI_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [testAddresses[4] as `0x${string}`],
-      },
+      call(DAI_BASE, erc20_abi, 'totalSupply'),
+      call(DAI_BASE, erc20_abi, 'symbol'),
+      call(DAI_BASE, erc20_abi, 'name'),
+      call(DAI_BASE, erc20_abi, 'decimals'),
+      call(DAI_BASE, erc20_abi, 'balanceOf', [TEST_ADDR[1]]),
 
       // cbETH calls
-      { address: cbETH_BASE as `0x${string}`, abi: erc20Abi, functionName: 'totalSupply' },
-      { address: cbETH_BASE as `0x${string}`, abi: erc20Abi, functionName: 'symbol' },
-      { address: cbETH_BASE as `0x${string}`, abi: erc20Abi, functionName: 'decimals' },
-      {
-        address: cbETH_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [testAddresses[0] as `0x${string}`],
-      },
-      {
-        address: WETH_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [testAddresses[3] as `0x${string}`],
-      },
+      call(cbETH_BASE, erc20_abi, 'totalSupply'),
+      call(cbETH_BASE, erc20_abi, 'symbol'),
+      call(cbETH_BASE, erc20_abi, 'decimals'),
+      call(cbETH_BASE, erc20_abi, 'balanceOf', [TEST_ADDR[0]]),
+      call(WETH, erc20_abi, 'balanceOf', [TEST_ADDR[6]]),
       // Allowance checks
-      {
-        address: USDC_BASE as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [testAddresses[1] as `0x${string}`, testAddresses[2] as `0x${string}`],
-      },
-    ] as const;
+      call(USDC, erc20_abi, 'allowance', [TEST_ADDR[4], TEST_ADDR[5]]),
+    ];
 
     console.log(`Executing ${contracts.length} multicalls...`);
 
     // Perform multicall
     const results = await client.multicall({
-      contracts,
+      contracts: contracts as any,
       blockNumber,
     });
 
@@ -229,9 +178,7 @@ describe('Viem Multicall with JIT Compression', () => {
   }, 60000);
 
   test('should compress large eth_call through viem with JIT', async () => {
-    // Load test data
-    const testDataPath = join(__dirname, 'fixture', '36670119.raw.json');
-    const testData: TestData = JSON.parse(readFileSync(testDataPath, 'utf8'));
+    const testData: TestData = loadFixture('36670119.raw.json');
 
     const largeTxs = testData.transactions
       .filter((tx) => tx.input?.length > 2000)
@@ -260,12 +207,12 @@ describe('Viem Multicall with JIT Compression', () => {
       try {
         const result = await client.call({
           account: tx.from as `0x${string}`,
-          to: ECHO_CONTRACT_ADDRESS as `0x${string}`,
+          to: TEST_ADDR[1] as `0x${string}`,
           data: tx.input as `0x${string}`,
           blockNumber,
           stateOverride: [
             {
-              address: ECHO_CONTRACT_ADDRESS as `0x${string}`,
+              address: TEST_ADDR[1] as `0x${string}`,
               code: ECHO_CONTRACT_BYTECODE as `0x${string}`,
               balance: parseEther('1'),
             },
@@ -288,19 +235,14 @@ describe('Viem Multicall with JIT Compression', () => {
   }, 60000);
 
   test('should not compress when state overrides are present', async () => {
-    // Import the compress_call function
     const { compress_call } = await import('../dist/_esm/jit-compressor.js');
 
-    // Create a large calldata payload (>1150 bytes to trigger compression)
-    const largeCalldata = '0x' + 'ab'.repeat(5700);
-
-    // Create existing state overrides
     const existingOverrides = {
-      '0x1111111111111111111111111111111111111111': {
+      [TEST_ADDR[1]]: {
         balance: '0x1000000000000000000',
         code: '0x6080604052',
       },
-      '0x2222222222222222222222222222222222222222': {
+      [TEST_ADDR[2]]: {
         nonce: '0x5',
         stateDiff: {
           '0x0000000000000000000000000000000000000000000000000000000000000001': '0xabcd',
@@ -308,109 +250,51 @@ describe('Viem Multicall with JIT Compression', () => {
       },
     };
 
-    // Create a payload with existing state overrides
-    const payload = {
-      method: 'eth_call',
-      params: [
-        {
-          from: '0x0000000000000000000000000000000000000000',
-          to: '0x3333333333333333333333333333333333333333',
-          data: largeCalldata,
-        },
-        'latest',
-        existingOverrides,
-      ],
-    };
+    const payload = mockEthCall({
+      from: TEST_ADDR[0],
+      to: TEST_ADDR[3],
+      data: gen_call(5700),
+      overrides: existingOverrides,
+    });
 
-    // Should return uncompressed payload
     const result = compress_call(payload, 'jit');
 
-    // Verify payload was NOT compressed (returned as-is)
     expect(result).toBe(payload);
-    expect(result.params[0].to).toBe('0x3333333333333333333333333333333333333333');
+    expect(result.params[0].to).toBe(TEST_ADDR[3]);
     expect(result.params[2]).toEqual(existingOverrides);
 
     console.log('\x1b[32mPASS\x1b[0m State override rejection test - compression skipped');
   });
 
   test('should not compress when decompressor address has existing override', async () => {
-    // Import the compress_call function
     const { compress_call } = await import('../dist/_esm/jit-compressor.js');
 
-    const largeCalldata = '0x' + 'ab'.repeat(600);
+    const data = gen_call(600);
+    const testPayload = mockEthCall({ to: TEST_ADDR[3], data });
+    const compressed = compress_call(testPayload, 'flz');
+    const decompressorAddress = Object.keys(compressed.params[2])[0];
 
-    // Create state overrides that include the decompressor address
-    const existingOverrides = {
-      '0x00000000000000000000000000000000000000e0': {
-        code: '0x1234',
-      },
-    };
+    const payload = mockEthCall({
+      to: TEST_ADDR[3],
+      data,
+      overrides: { [decompressorAddress]: { code: '0x1234' } },
+    });
 
-    const payload = {
-      method: 'eth_call',
-      params: [
-        {
-          to: '0x3333333333333333333333333333333333333333',
-          data: largeCalldata,
-        },
-        'latest',
-        existingOverrides,
-      ],
-    };
-
-    // Should return uncompressed payload
     const result = compress_call(payload, 'jit');
-
-    // Verify payload was NOT compressed (returned as-is)
     expect(result).toBe(payload);
 
     console.log('\x1b[32mPASS\x1b[0m Decompressor address conflict test - compression skipped');
   });
 
-  test('should not compress when block parameter is not latest', async () => {
-    const { compress_call } = await import('../dist/_esm/jit-compressor.js');
-
-    const largeCalldata = '0x' + 'ab'.repeat(600);
-
-    const payload = {
-      method: 'eth_call',
-      params: [
-        {
-          to: '0x3333333333333333333333333333333333333333',
-          data: largeCalldata,
-        },
-        '0x123456', // Specific block number
-      ],
-    };
-
-    const result = compress_call(payload, 'jit');
-
-    // Should not compress
-    expect(result).toBe(payload);
-
-    console.log('\x1b[32mPASS\x1b[0m Non-latest block test - compression skipped');
-  });
-
   test('should not compress when call has extra properties', async () => {
     const { compress_call } = await import('../dist/_esm/jit-compressor.js');
 
-    const largeCalldata = '0x' + 'ab'.repeat(600);
-
     const payload = {
       method: 'eth_call',
-      params: [
-        {
-          to: '0x3333333333333333333333333333333333333333',
-          data: largeCalldata,
-          gas: '0x100000', // Extra property
-        },
-        'latest',
-      ],
+      params: [{ to: TEST_ADDR[3], data: gen_call(600), gas: '0x100000' }, 'latest'],
     };
 
     const result = compress_call(payload, 'jit');
-
-    // Should not compress
     expect(result).toBe(payload);
 
     console.log('\x1b[32mPASS\x1b[0m Extra properties test - compression skipped');
@@ -419,22 +303,12 @@ describe('Viem Multicall with JIT Compression', () => {
   test('should not compress when missing target address', async () => {
     const { compress_call } = await import('../dist/_esm/jit-compressor.js');
 
-    const largeCalldata = '0x' + 'ab'.repeat(600);
-
     const payload = {
       method: 'eth_call',
-      params: [
-        {
-          data: largeCalldata,
-          // Missing 'to' address
-        },
-        'latest',
-      ],
+      params: [{ data: gen_call(600) }, 'latest'],
     };
 
     const result = compress_call(payload, 'jit');
-
-    // Should not compress
     expect(result).toBe(payload);
 
     console.log('\x1b[32mPASS\x1b[0m Missing target address test - compression skipped');

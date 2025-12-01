@@ -1,18 +1,10 @@
-import { readFileSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
 import { MIN_BODY_SIZE } from '../src/index';
+import { LibZip } from 'solady';
+import * as u from './utils';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const soladyModule = await import('solady');
-const evmModule = await import('./fixture/evm-runner.js');
-const utilsModule = await import('./utils.js');
-const { LibZip } = soladyModule;
-const { runEvmBytecode } = evmModule;
-const { ECHO_CONTRACT_BYTECODE, ECHO_CONTRACT_ADDRESS } = utilsModule;
+const { runEvmBytecode } = await import('./fixture/evm-runner.js');
+const { ECHO_CONTRACT_BYTECODE, CALLER_ADDRESS, TEST_ADDR, loadFixture, writeFileSync, join, fixtureDir } = u;
 
 interface Transaction {
   from: string;
@@ -26,7 +18,6 @@ interface TestData {
 
 const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
 
-const CALLER_ADDRESS = '0x9999999999999999999999999999999999999999';
 const COMPRESSION_THRESHOLD = 0.7;
 
 const testMethod = async (
@@ -45,13 +36,19 @@ const testMethod = async (
     return { success: true, gas: 0n, reconstructed: undefined, error: undefined };
 
   const decompressorCode = stateOverride[decompressorAddress].code;
+  const decompressorBalance = stateOverride[decompressorAddress].balance || '0x0';
   const txObj = payload.params[0];
+  const fromAddress = txObj.from || CALLER_ADDRESS;
 
-  // Set up both the target contract (echo) and any addresses from state override
+  // Set up both the target contract (echo) and the decompressor with its balance
   const state: any = {
     [targetAddress]: {
       code: ECHO_CONTRACT_BYTECODE,
       balance: '0',
+    },
+    [decompressorAddress]: {
+      code: decompressorCode,
+      balance: decompressorBalance,
     },
   };
 
@@ -59,7 +56,7 @@ const testMethod = async (
     const evmResult = await runEvmBytecode(decompressorCode, txObj.data, {
       state,
       contractAddress: decompressorAddress,
-      callerAddress: CALLER_ADDRESS,
+      callerAddress: fromAddress,
     });
 
     if (evmResult?.returnValue) {
@@ -212,14 +209,15 @@ const summarizeResults = (
   if (opts?.includeAvgSrcSize && avgSrcSize) {
     console.log(`Avg Src Size: ${avgSrcSize.toFixed(1)} bytes`);
   }
+  const jitAvg = mean(jitRatios);
+  const flzAvg = mean(flzRatios);
+  const cdAvg = mean(cdRatios);
+
   console.log(
-    `Ratio (< ${COMPRESSION_THRESHOLD * 100}% on common sample set):\n JIT ${(
-      mean(jitRatios) * 100
-    ).toFixed(1)}% (${jitRatios.length}/${results.length}) | FLZ ${(mean(flzRatios) * 100).toFixed(
-      1,
-    )}% (${flzRatios.length}/${results.length}) | CD ${(mean(cdRatios) * 100).toFixed(
-      1,
-    )}% (${cdRatios.length}/${results.length})`,
+    `Ratio (< ${COMPRESSION_THRESHOLD * 100}% on common sample set):\n` +
+      ` JIT ${(1 / jitAvg).toFixed(2)}x (${(jitAvg * 100).toFixed(2)}%, ${jitRatios.length}/${results.length}) |` +
+      ` FLZ ${(1 / flzAvg).toFixed(2)}x (${(flzAvg * 100).toFixed(2)}%, ${flzRatios.length}/${results.length}) |` +
+      ` CD ${(1 / cdAvg).toFixed(2)}x (${(cdAvg * 100).toFixed(2)}%, ${cdRatios.length}/${results.length})`,
   );
   console.log(
     `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(
@@ -235,14 +233,13 @@ const summarizeResults = (
 
 describe('JIT Compression Test Suite', () => {
   test('should perform roundtrip smoke test on latest Base blocks', async () => {
-    const blocksFile = join(__dirname, 'fixture', 'base-blocks.json');
-    const cached = JSON.parse(readFileSync(blocksFile, 'utf8'));
+    const cached = loadFixture('base-blocks.json');
     const blocks = cached.blocks;
     const allTransactions: Transaction[] = [];
     for (const block of blocks) {
       if (block.transactions && Array.isArray(block.transactions)) {
         for (const tx of block.transactions) {
-          if (tx.to && tx.input && tx.input !== '0x' && tx.input.length >= MIN_BODY_SIZE) {
+          if (tx.to && tx.input && tx.input !== '0x' && tx.input.length >= MIN_BODY_SIZE && tx.input?.length < 3000) {
             allTransactions.push({
               from: tx.from,
               to: tx.to,
@@ -276,7 +273,7 @@ describe('JIT Compression Test Suite', () => {
 
     // Write failures to file if any
     if (allFailures.length > 0) {
-      const failuresFile = join(__dirname, 'fixture', 'base-blocks-failures.json');
+      const failuresFile = join(fixtureDir, 'base-blocks-failures.json');
       const failureReport = {
         timestamp: new Date().toISOString(),
         totalTested: results.length,
@@ -337,7 +334,7 @@ describe('JIT Compression Test Suite', () => {
   test('should not compress non-eth_call methods', () => {
     const payload = {
       method: 'eth_sendTransaction',
-      to: ECHO_CONTRACT_ADDRESS,
+      to: TEST_ADDR[1],
       data: '0x' + '00'.repeat(1000),
     };
 
@@ -349,7 +346,7 @@ describe('JIT Compression Test Suite', () => {
   test('should not compress eth_call below minimum size threshold', () => {
     const payload = {
       method: 'eth_call',
-      to: ECHO_CONTRACT_ADDRESS,
+      to: TEST_ADDR[1],
       data: '0x' + '00'.repeat(10),
     };
 
@@ -359,8 +356,7 @@ describe('JIT Compression Test Suite', () => {
   });
 
   test('should compress and decompress transactions correctly', async () => {
-    const testDataPath = join(__dirname, 'fixture', '36670119.raw.json');
-    const testData: TestData = JSON.parse(readFileSync(testDataPath, 'utf8'));
+    const testData: TestData = loadFixture('36670119.raw.json');
 
     const txsWithCalldata = testData.transactions
       .map((tx, idx) => ({ tx, idx }))

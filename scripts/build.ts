@@ -32,9 +32,10 @@ const bundledConfig: Partial<BuildOptions> = {
 
 const compressorConfig: Partial<BuildOptions> = {
   ...baseConfig,
-  bundle: false,
+  bundle: true,
   platform: 'neutral',
   target: ['es2020'],
+  external: ['solady'],
 };
 
 async function buildAll() {

@@ -1,7 +1,7 @@
 const { createVM } = require('@ethereumjs/vm');
 const { Common, Mainnet } = require('@ethereumjs/common');
 const { Address, Account } = require('@ethereumjs/util');
-const { hexToBytes } = require('../utils.js');
+const { hexToBytes } = require('../utils.ts');
 
 function uint8ArrayToHex(bytes) {
   let hex = '';
@@ -111,4 +111,4 @@ async function runEvmBytecode(bytecode, calldata, options = {}) {
   };
 }
 
-export { runEvmBytecode };
+module.exports = { runEvmBytecode };
