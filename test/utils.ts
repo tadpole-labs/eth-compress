@@ -59,7 +59,13 @@ export function hexToBytes(hex: string): Uint8Array {
 export const call = (address: string, abi: any, functionName: string, args?: any[]) =>
   args ? { address, abi, functionName, args } : { address, abi, functionName };
 
-export const mockEthCall = ({ to, data, from, block, overrides }: {
+export const mockEthCall = ({
+  to,
+  data,
+  from,
+  block,
+  overrides,
+}: {
   to: string;
   data: string;
   from?: string;
@@ -81,7 +87,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export const loadFixture = (filename: string) => 
+export const loadFixture = (filename: string) =>
   JSON.parse(readFileSync(join(__dirname, 'fixture', filename), 'utf8'));
 
 export { readFileSync, writeFileSync } from 'fs';

@@ -1,7 +1,7 @@
 import { MAX_256_BIT } from './constants';
 
 export const not = (a: bigint): bigint => ~a & MAX_256_BIT;
-export const eq = (a: bigint, b: bigint): bigint => a === b ? 1n : 0n;
+export const eq = (a: bigint, b: bigint): bigint => (a === b ? 1n : 0n);
 export const and = (a: bigint, b: bigint): bigint => a & b & MAX_256_BIT;
 export const or = (a: bigint, b: bigint): bigint => (a | b) & MAX_256_BIT;
 export const xor = (a: bigint, b: bigint): bigint => (a ^ b) & MAX_256_BIT;

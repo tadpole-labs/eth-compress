@@ -1,11 +1,11 @@
 import { MAX_128_BIT, MAX_256_BIT } from './constants';
-import { and, not, or, shl, shr, sigext, sub, xor, clz, ctz } from './opcodes';
+import { and, clz, ctz, not, or, shl, shr, sigext, sub, xor } from './opcodes';
 import { _normHex, _uint8ArrayToHex, initMemoryView } from './utils';
 
 export const _jitDecompressor = function (
   calldata: string,
   to: string,
-  from?: string
+  from?: string,
 ): { bytecode: string; calldata: string; to: string; from?: string; balance: string } {
   // Right‑align the 4‑byte selector in the first 32‑byte slot (offset 28),
   // so that everything after the selector is reconstructed on mostly
@@ -23,7 +23,7 @@ export const _jitDecompressor = function (
     .map(([word, freq]) => [BigInt('0x' + word), freq] as [bigint, number])
     .filter(([val]) => !excluded.has(val));
   if (filtered.length > 0) {
-    selfbalance = filtered.reduce((max, curr) => curr[1] > max[1] ? curr : max)[0];
+    selfbalance = filtered.reduce((max, curr) => (curr[1] > max[1] ? curr : max))[0];
   }
   const { wordCount } = view;
   let ops: number[] = [];
@@ -69,8 +69,8 @@ export const _jitDecompressor = function (
   const addOp = (op: number, imm?: number[]) => {
     if (op === 0x80) {
       // DUP1
-      const val = stack.pop()
-      stack.push(val)
+      const val = stack.pop();
+      stack.push(val);
       pushS(val, firstPass ? 0 : 1);
     } else if (op === 0x47) {
       pushS(selfbalance, 0);
@@ -391,7 +391,15 @@ export const _jitDecompressor = function (
   mem = new Map();
   // Pre 2nd pass. Push most frequent literals into stack.
   Array.from(stackFreq.entries())
-    .filter(([val, freq]) => freq > 1 && val > 0n && val != selfbalance && val !== 32n && val !== decAddr && val != fromAddr)
+    .filter(
+      ([val, freq]) =>
+        freq > 1 &&
+        val > 0n &&
+        val != selfbalance &&
+        val !== 32n &&
+        val !== decAddr &&
+        val != fromAddr,
+    )
     .sort((a, b) => stackCnt.get(b[0])! - stackCnt.get(a[0])!)
     .filter(([val, _]) => {
       return typeof val === 'number' ? BigInt(val) : val <= MAX_128_BIT;
@@ -439,7 +447,7 @@ export const _jitDecompressor = function (
   // - RETURN(0, RETURNDATASIZE)
   const bytecode = '0x' + _uint8ArrayToHex(new Uint8Array(out)) + '345f355af13d5f5f3e3d5ff3';
   const calldataOut = '0x' + _normHex(originalTo).padStart(64, '0');
-  
+
   return {
     bytecode,
     calldata: calldataOut,

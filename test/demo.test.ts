@@ -3,7 +3,7 @@ import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { compressModule, compressModuleWithJIT } from '../dist/_esm/index.node.js';
-import { BASE_RPC_URL, PROXY_URL, loadFixture } from './utils';
+import { BASE_RPC_URL, loadFixture, PROXY_URL } from './utils';
 
 let proxyServer;
 

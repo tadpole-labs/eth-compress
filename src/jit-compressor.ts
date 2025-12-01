@@ -41,7 +41,7 @@ export const compress_call = function (payload: any, alg?: string): any {
   const inputData = '0x' + _normHex(txObj.data);
   const to = txObj.to;
   const from = txObj.from;
-  
+
   let bytecode: string;
   let calldata: string;
   let decompressorAddress: string;
@@ -56,6 +56,7 @@ export const compress_call = function (payload: any, alg?: string): any {
     fromAddr = result.from;
     balanceHex = result.balance;
   } else {
+    const jit = !alg ? _jitDecompressor(inputData, to, from) : null;
     const flzData = alg === 'flz' || !alg ? LibZip.flzCompress(inputData) : null;
     const cdData = alg === 'cd' || (!alg && flzData) ? LibZip.cdCompress(inputData) : null;
     const useFlz =
@@ -68,10 +69,21 @@ export const compress_call = function (payload: any, alg?: string): any {
       calldata = cdData!;
       bytecode = rleFwdBytecode(to);
     }
-    
-    decompressorAddress = '0x' + (224n).toString(16).padStart(40, '0');
+
+    decompressorAddress = '0x' + 224n.toString(16).padStart(40, '0');
     fromAddr = from ? _normHex(from).padStart(16, '0') : undefined;
     balanceHex = '0';
+    if (
+      !alg &&
+      jit &&
+      jit.bytecode.length + jit.calldata.length < bytecode.length + calldata.length
+    ) {
+      bytecode = jit.bytecode;
+      calldata = jit.calldata;
+      decompressorAddress = jit.to;
+      fromAddr = jit.from;
+      balanceHex = jit.balance;
+    }
   }
 
   // Skip if not beneficial
@@ -88,10 +100,6 @@ export const compress_call = function (payload: any, alg?: string): any {
 
   return {
     ...payload,
-    params: [
-      compressedTxObj,
-      blockParam,
-      { ...overrides, [decompressorAddress]: stateOverride },
-    ],
+    params: [compressedTxObj, blockParam, { ...overrides, [decompressorAddress]: stateOverride }],
   };
 };

@@ -70,7 +70,11 @@ export async function compressModule(
     opts = {
       ...opts,
       body: compressed,
-      headers: { ...(opts && opts.headers), 'Content-Encoding': supported, ...((opts?.headers && 'Accept-Language' in opts.headers) ? { 'Accept-Language': '*' } : {}) },
+      headers: {
+        ...(opts && opts.headers),
+        'Content-Encoding': supported,
+        ...(opts?.headers && 'Accept-Language' in opts.headers ? { 'Accept-Language': '*' } : {}),
+      },
     };
   }
   const response = await fetch(url, opts);

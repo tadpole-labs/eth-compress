@@ -1,5 +1,3 @@
-
-
 export const _normHex = (hex: string): string => hex.replace(/^0x/, '').toLowerCase();
 
 export const _hexToUint8Array = (hex: string): Uint8Array => {
@@ -131,8 +129,7 @@ export const initMemoryView = (calldata: string, padding: number): MemoryView =>
   }
 
   for (const stats of wordStats.values()) {
-    const baseBytes =
-      stats.firstOffset === 0 ? 0 : Math.ceil(Math.log2(stats.firstOffset + 1) / 8);
+    const baseBytes = stats.firstOffset === 0 ? 0 : Math.ceil(Math.log2(stats.firstOffset + 1) / 8);
     const reuseCost = baseBytes + 3;
     const totalLiteralBytes = stats.normFreq * 32;
     const totalReuseBytes = stats.normFreq * reuseCost;
@@ -183,4 +180,3 @@ export const initMemoryView = (calldata: string, padding: number): MemoryView =>
     slice,
   };
 };
-

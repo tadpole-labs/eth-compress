@@ -2,13 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import http from 'node:http';
 import {
   CORS_HEADERS,
+  fixtureDir,
+  getNextEndpoint,
+  getTestCaseName,
+  join,
   PROXY_PORT,
   RPC_ENDPOINTS,
-  getNextEndpoint,
-  fixtureDir,
-  getTestCaseName,
   writeFileSync,
-  join,
 } from './utils.ts';
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse) {
@@ -100,4 +100,3 @@ server.listen(PROXY_PORT, () => {
   });
   console.log('\nRequest/Response logs: test/fixture/proxy-{request,response}-<testcase>.json');
 });
-

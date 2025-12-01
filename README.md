@@ -116,11 +116,11 @@ Selection logic (subject to change, but current behaviour):
   - `< 1150 bytes (effective payload)`: no EVM-level compression.
   - `≥ 1150 bytes`: compression considered.
   - `size ≤ ~3000 bytes or > ~8000 bytes`: JIT is preferred.
-  - `~3000 ≤ size ≤ ~8000 bytes`: FastLZ or RLE.
+  - `~3000 ≤ size ≤ ~8000 bytes`: Best of 3
 
 - **Algorithm choice**:
   - For mid-sized payloads, FLZ and CD are tried and the smaller output is chosen.
-  - For larger payloads, JIT is used directly, focusing on gas-efficient decompression.
+  - For larger payloads, JIT is used directly, prioritizing gas efficiency.
   - The thresholds are chosen with consideration for request header overhead & latency,
   aiming to keep the total request size within the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
 

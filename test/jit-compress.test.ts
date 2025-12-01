@@ -1,10 +1,18 @@
+import { LibZip } from 'solady';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
 import { MIN_BODY_SIZE } from '../src/index';
-import { LibZip } from 'solady';
 import * as u from './utils';
 
 const { runEvmBytecode } = await import('./fixture/evm-runner.js');
-const { ECHO_CONTRACT_BYTECODE, CALLER_ADDRESS, TEST_ADDR, loadFixture, writeFileSync, join, fixtureDir } = u;
+const {
+  ECHO_CONTRACT_BYTECODE,
+  CALLER_ADDRESS,
+  TEST_ADDR,
+  loadFixture,
+  writeFileSync,
+  join,
+  fixtureDir,
+} = u;
 
 interface Transaction {
   from: string;
@@ -239,7 +247,7 @@ describe('JIT Compression Test Suite', () => {
     for (const block of blocks) {
       if (block.transactions && Array.isArray(block.transactions)) {
         for (const tx of block.transactions) {
-          if (tx.to && tx.input && tx.input !== '0x' && tx.input.length >= MIN_BODY_SIZE && tx.input?.length < 3000) {
+          if (tx.to && tx.input && tx.input !== '0x' && tx.input.length >= MIN_BODY_SIZE) {
             allTransactions.push({
               from: tx.from,
               to: tx.to,
