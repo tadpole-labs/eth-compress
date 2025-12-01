@@ -1,6 +1,6 @@
 {
   "name": "eth-compress",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": false,
   "type": "module",
   "description": "Client-to-server compression (viem-compatible) module for compressed, gas-efficient, low-latency eth_call requests.",
@@ -99,7 +99,7 @@
     "node": ">=22",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@10.23.0",
+  "packageManager": "pnpm@10.24.0",
   "pnpm": {
     "peerDependencyRules": {
       "ignoreMissing": [
@@ -111,7 +111,7 @@
     "solady": "0.1.26"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.3.7",
+    "@biomejs/biome": "2.3.8",
     "@ethereumjs/common": "10.1.0",
     "@ethereumjs/util": "10.1.0",
     "@ethereumjs/vm": "10.1.0",
@@ -119,7 +119,7 @@
     "@types/node": "24.10.1",
     "esbuild": "0.27.0",
     "typescript": "5.9.3",
-    "viem": "2.40.2",
+    "viem": "2.40.3",
     "vitest": "4.0.14"
   },
   "browserslist": [
