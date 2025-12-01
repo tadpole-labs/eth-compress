@@ -124,12 +124,16 @@ Selection logic (subject to change, but current behaviour):
   - The thresholds are chosen with consideration for request header overhead & latency,
   aiming to keep the total request size within the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
 
-
-
 ### Important considerations
 
 The JIT calldata compressor is **experimental** and targets efficient compression of **read-only `eth_call`s for auxiliary dApp data loaded in bulk** (e.g. dashboards, analytics, non-critical views). It is **not recommended** for on-chain deployment or for critical paths in dApp flows that directly influence user operations. For separation of concerns, it is recommended to initialize **one client for auxiliary data** (with JIT compression enabled) and **another client for user operations**, and perform a separate requests for user‑facing operations.
 
+### Compression Ratio & Gas
+| Tx Size Range      | # Txns | Avg. Tx Size| JIT Ratio    | FLZ Ratio        | CD Ratio         | JIT Gas         | FLZ Gas         | CD Gas          |
+|------------------------|--------|-------------------|:-------------------------:|:----------------:|:----------------:|:---------------:|:---------------:|:---------------:|
+| **> 8 KB**             | 129    | 14.90 kb          | 2.95x                     | **3.62x**        | 3.21x            | **8.02k**       | 323k            | 242k            |
+| **3–8 KB**             | 260    | 4.82 kb           | 2.77x                     | 2.59x            | **2.81x**        | **4.45k**       | 138k            | 88.9k           |
+| **1.15–3 KB**          | 599    | 2.02 kb           | **2.89x**                 | 1.91x            | 2.58x            | **3.36k**       | 68.4k           | 35.8k           |
 
 ### Implementation notes & compression flavours
 - **JIT calldata compiler (`compress_call` JIT mode)**: Views the calldata as a zero‑initialized memory image and synthesises bytecode that rebuilds it word-by-word in-place.
@@ -139,8 +143,6 @@ The JIT calldata compressor is **experimental** and targets efficient compressio
   In the second pass it materialises this plan into concrete PUSH/MSTORE/SHL/OR/DUP opcodes, pre-seeds the stack with frequently used constants, and appends a small CALL/RETURNDATA stub that forwards the reconstructed calldata to the original `to` address.
   
   The execution is realized through a `stateDiff` passed together with the `eth_call`. The 4‑byte selector is right‑aligned in the first 32‑byte slot so that the rest of the calldata can be reconstructed on mostly word‑aligned boundaries, with the decompressor stateDiff being placed at `0x00000000000000000000000000000000000000e0` such that `0xe0` can be obtained from `ADDRESS` with a single opcode instead of an explicit literal.
-  
-  Achieves higher compression ratios compared to both FastLZ & Run-Length-Encoding (around 10–15% **smaller payloads**) for smaller calldata <3kb, and on par above 8kb (except in cases with deeply nested calls and types, minimally worse), at a fraction of the gas footprint (<5%).
 
 - **FastLZ path (`LibZip.flzCompress` / `flzDecompress`)**: Implements a minimal LZ77-style compressor over raw bytes with a 3-byte rolling window. Each 24-bit chunk is hashed into a tiny table; repeated substrings within a bounded look-back distance are emitted as (length, distance) match tokens, and everything else is emitted as literal runs. Decompression is a simple loop over this stream that copies literals and then copies `length` bytes from `distance` bytes back in the already-produced output.
 
