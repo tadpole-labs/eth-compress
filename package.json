@@ -86,6 +86,7 @@
     "test:jit": "vitest run test/jit-compress.test.ts --config test/vitest.config.ts",
     "test:demo": "vitest run test/demo.test.ts --config test/vitest.config.ts",
     "test:viem": "vitest run test/viem-multicall.test.ts --config test/vitest.config.ts",
+    "test:benchmark": "vitest run test/multicall-benchmark.test.ts --config test/vitest.config.ts",
     "test": "pnpm run build && pnpm run test:jit && pnpm run test:demo && pnpm run test:viem",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
@@ -99,7 +100,7 @@
     "node": ">=22",
     "pnpm": ">=10"
   },
-  "packageManager": "pnpm@10.24.0",
+  "packageManager": "pnpm@10.25.0",
   "pnpm": {
     "peerDependencyRules": {
       "ignoreMissing": [
@@ -115,12 +116,12 @@
     "@ethereumjs/common": "10.1.0",
     "@ethereumjs/util": "10.1.0",
     "@ethereumjs/vm": "10.1.0",
-    "@types/bun": "1.3.3",
+    "@types/bun": "1.3.4",
     "@types/node": "24.10.1",
-    "esbuild": "0.27.0",
+    "esbuild": "0.27.1",
     "typescript": "5.9.3",
-    "viem": "2.40.3",
-    "vitest": "4.0.14"
+    "viem": "2.41.2",
+    "vitest": "4.0.15"
   },
   "browserslist": [
     ">0.3%",

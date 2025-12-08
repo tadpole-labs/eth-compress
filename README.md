@@ -8,7 +8,8 @@ _Plug'n Play with viem & with a simple API_
 
 ### Scope
   - **Only read-only `eth_call`'s are considered**
-  - Compression is only attempted above a size threshold (currently 1150 bytes of JSON body for HTTP compression, and similarly gated for JIT calldata compression), and only applied if it strictly reduces total request size.
+  - Compression is only attempted above a size threshold and only applied if it strictly reduces total request size.
+    - Currently >1150 bytes for HTTP compression, and similarly gated for JIT calldata compression.
   - The HTTP path uses standard `Content-Encoding` (e.g. gzip/deflate) negotiation; the EVM path rewrites eligible `eth_call`s through a transient decompressor contract and forwards calldata to the original `to` address via state overrides.
   - For reference: Large `eth_call`s >70kb that compress to about **40% smaller payload size** (i.e. ~60% of the original bytes on the wire) can see roughly 30–40% latency reduction. (Precise benefits depend on many factors; this is a reasonable average-case projection.)
 
@@ -143,10 +144,6 @@ The JIT calldata compressor is **experimental** and targets efficient compressio
   In the second pass it materialises this plan into concrete PUSH/MSTORE/SHL/OR/DUP opcodes, pre-seeds the stack with frequently used constants, and appends a small CALL/RETURNDATA stub that forwards the reconstructed calldata to the original `to` address.
   
   The execution is realized through a `stateDiff` passed together with the `eth_call`. The 4‑byte selector is right‑aligned in the first 32‑byte slot so that the rest of the calldata can be reconstructed on mostly word‑aligned boundaries, with the decompressor stateDiff being placed at `0x00000000000000000000000000000000000000e0` such that `0xe0` can be obtained from `ADDRESS` with a single opcode instead of an explicit literal.
-
-- **FastLZ path (`LibZip.flzCompress` / `flzDecompress`)**: Implements a minimal LZ77-style compressor over raw bytes with a 3-byte rolling window. Each 24-bit chunk is hashed into a tiny table; repeated substrings within a bounded look-back distance are emitted as (length, distance) match tokens, and everything else is emitted as literal runs. Decompression is a simple loop over this stream that copies literals and then copies `length` bytes from `distance` bytes back in the already-produced output.
-
-- **Calldata RLE path (`LibZip.cdCompress` / `cdDecompress`)**: Targets the two most common runs in calldata—long stretches of `0x00` and shorter stretches of `0xff`—and turns them into compact `[marker][control]` pairs, where the control byte encodes which value and how many repetitions to emit. Bytes that are not part of such runs are left verbatim, so the decoder can just scan the stream and either expand a run or forward a single byte.
 
 Both the FastLZ and calldata-RLE forwarders are minimally adopted from Solady's [`LibZip.sol`](https://github.com/Vectorized/solady/blob/main/src/utils/LibZip.sol) and inlined as raw bytecode. To avoid Solidity's wrapper overhead the code is compiled from pure yul.
 
