@@ -1,6 +1,6 @@
 {
   "name": "eth-compress",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": false,
   "type": "module",
   "description": "Client-to-server compression (viem-compatible) module for compressed, gas-efficient, low-latency eth_call requests.",
@@ -12,12 +12,12 @@
     "latency",
     "viem"
   ],
-  "bugs": "https://github.com/tadpole-labs/eth-compress/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tadpole-labs/eth-compress.git"
   },
   "homepage": "https://github.com/tadpole-labs/eth-compress",
+  "bugs": "https://github.com/tadpole-labs/eth-compress/issues",
   "license": "Apache-2.0 OR MIT",
   "main": "./_esm/index.node.js",
   "types": "./_types/index.d.ts",
@@ -86,7 +86,6 @@
     "test:jit": "vitest run test/jit-compress.test.ts --config test/vitest.config.ts",
     "test:demo": "vitest run test/demo.test.ts --config test/vitest.config.ts",
     "test:viem": "vitest run test/viem-multicall.test.ts --config test/vitest.config.ts",
-    "test:benchmark": "vitest run test/multicall-benchmark.test.ts --config test/vitest.config.ts",
     "test": "pnpm run build && pnpm run test:jit && pnpm run test:demo && pnpm run test:viem",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
@@ -117,7 +116,7 @@
     "@ethereumjs/util": "10.1.0",
     "@ethereumjs/vm": "10.1.0",
     "@types/bun": "1.3.4",
-    "@types/node": "24.10.1",
+    "@types/node": "25.0.1",
     "esbuild": "0.27.1",
     "typescript": "5.9.3",
     "viem": "2.41.2",
