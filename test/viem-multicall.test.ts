@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import { createPublicClient, http, parseEther } from 'viem';
 import { base } from 'viem/chains';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { compressModuleWithJIT } from '../dist/_esm/index.node.js';
+import { compressModule } from '../dist/_esm/index.node.js';
+import { compress_call } from '../dist/_esm/jit-compressor.js';
 import * as u from './utils';
 
 const {
@@ -94,7 +95,7 @@ describe('Viem Multicall with JIT Compression', () => {
     const client = createPublicClient({
       chain: base,
       transport: http(PROXY_URL, {
-        fetchFn: compressModuleWithJIT,
+        fetchFn: (url, init) => compressModule(url, init, compress_call),
       }),
       batch: {
         multicall: {
@@ -191,7 +192,7 @@ describe('Viem Multicall with JIT Compression', () => {
     const client = createPublicClient({
       chain: base,
       transport: http(PROXY_URL, {
-        fetchFn: compressModuleWithJIT,
+        fetchFn: (url, init) => compressModule(url, init, compress_call),
       }),
     });
 

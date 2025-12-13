@@ -1,122 +1,86 @@
 export const MIN_BODY_SIZE = 1150;
 
-const _sup_enc = new Map<string, string[] | -1>();
-const _enc = ['gzip', 'deflate'];
-let supported: string | -1 | null = typeof CompressionStream === 'undefined' ? -1 : null;
+const _cache = new Map<string, string | -1>();
+const _enc = ['gzip', 'deflate'] as const;
+type SupportedEncoding = (typeof _enc)[number];
 
 export type PayloadTransform = (payload: unknown) => unknown;
+export type CompressionMode = 'passive' | 'proactive' | 'gzip' | 'deflate' | PayloadTransform;
 
 /**
- * Fetch-compatible function that applies HTTP compression (gzip/deflate) to requests.
- * Optionally transforms request payloads before sending.
- *
- * @param input - The resource URL, Request object, or URL string
- * @param init - Optional request initialization options
- * @param transformPayload - Optional function to transform the request payload
- * @returns A Promise that resolves to the Response
+ * @param input - URL or Request
+ * @param init - Request options
+ * @param mode - Compression mode:
+ *   - 'passive' (default): discover support via Accept-Encoding header first
+ *   - 'proactive': compress with gzip first, adjust if server rejects
+ *   - 'gzip' | 'deflate': use specified encoding directly (known support)
+ *   - PayloadTransform function: transform payload, skip HTTP compression
  */
-//! @__PURE__
 export async function compressModule(
   input: string | URL | Request,
   init?: RequestInit,
-): Promise<Response>;
-
-//! @__PURE__
-export async function compressModule(
-  input: string | URL | Request,
-  init: RequestInit | undefined,
-  transformPayload?: PayloadTransform,
-): Promise<Response>;
-
-//! @__PURE__
-export async function compressModule(
-  input: string | URL | Request,
-  init?: RequestInit,
-  transformPayload?: PayloadTransform,
+  mode?: CompressionMode,
 ): Promise<Response> {
+  const req = input instanceof Request ? input : null;
   const url =
-    typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  const cached = _sup_enc.get(url);
-  supported = supported === -1 ? -1 : cached === -1 ? -1 : (cached?.[0] ?? null);
+    typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
+  const bodyStr = typeof init?.body === 'string' ? init.body : null;
 
-  let opts = { ...init, priority: 'high' as RequestPriority };
-  // Only apply the optional payload transform
-  // when native HTTP compression is not available for this URL.
-  if (transformPayload && opts?.body && typeof opts.body === 'string') {
-    if (supported === -1 || supported === null) {
+  // Custom transform: apply and skip HTTP compression
+  if (typeof mode === 'function') {
+    if (req && !init) return fetch(req);
+    let body = init?.body;
+    if (bodyStr)
       try {
-        const parsed = JSON.parse(opts.body as string);
-        const next = transformPayload(parsed);
-        if (next !== undefined) {
-          opts = {
-            ...opts,
-            body: JSON.stringify(next),
-          };
-        }
-      } catch {
-        // Non-JSON bodies are left untouched.
-      }
-    }
+        const next = mode(JSON.parse(bodyStr));
+        if (next !== undefined) body = JSON.stringify(next);
+      } catch {}
+    return fetch(req ?? url, { ...init, body });
   }
 
-  const bodyStr = typeof opts?.body === 'string' ? (opts.body as string) : null;
+  const cached = _cache.get(url);
+  const hasCS = typeof CompressionStream !== 'undefined';
+  const known = mode === 'gzip' || mode === 'deflate';
+  const encoding = !hasCS
+    ? null
+    : known
+      ? (mode as SupportedEncoding)
+      : mode === 'proactive'
+        ? cached === -1
+          ? null
+          : (cached ?? 'gzip')
+        : typeof cached === 'string'
+          ? cached
+          : null;
 
-  if (supported && supported !== -1 && bodyStr && bodyStr.length >= MIN_BODY_SIZE) {
-    const compressed = await new Response(
-      new Blob([bodyStr])
+  const shouldCompress = !!encoding && !!bodyStr && bodyStr.length >= MIN_BODY_SIZE;
+  const opts: RequestInit = { ...init, priority: 'high' as RequestPriority };
+  const headers = new Headers(opts.headers);
+  if (shouldCompress) {
+    opts.body = await new Response(
+      new Blob([bodyStr!])
         .stream()
-        .pipeThrough(new CompressionStream(supported as CompressionFormat)),
+        .pipeThrough(new CompressionStream(encoding as CompressionFormat)),
     ).blob();
-    opts = {
-      ...opts,
-      body: compressed,
-      headers: {
-        ...(opts && opts.headers),
-        'Content-Encoding': supported,
-        ...(opts?.headers && 'Accept-Language' in opts.headers ? { 'Accept-Language': '*' } : {}),
-      },
-    };
+    headers.set('Content-Encoding', encoding);
   }
-  const response = await fetch(url, opts);
+  opts.headers = headers;
 
-  if (supported === null) {
-    const encodings = response.headers
-      .get('Accept-Encoding')
-      ?.split(',')
-      .filter((e) => _enc.includes(e));
-    _sup_enc.set(url, encodings?.length ? encodings : -1);
+  const response = await fetch(req ?? url, opts);
+
+  // Cache discovery for passive/proactive (not known modes)
+  if (!known && cached === undefined) {
+    const header = response.headers.get('Accept-Encoding');
+    const discovered =
+      header
+        ?.split(',')
+        .map((e) => e.trim())
+        .find((e): e is SupportedEncoding => _enc.includes(e as SupportedEncoding)) ?? -1;
+    _cache.set(
+      url,
+      mode === 'proactive' && shouldCompress ? (response.ok ? encoding! : discovered) : discovered,
+    );
   }
 
   return response;
 }
-
-/**
- * Combines HTTP compression with EVM JIT compression.
- * Just pass this as `fetchFn` to viem's http transport.
- *
- * @param input - The resource URL or Request object
- * @param init - Optional request initialization options
- * @returns A Promise that resolves to the Response
- *
- * @example
- * ```ts
- * const client = createPublicClient({
- *   transport: http(rpcUrl, { fetchFn: compressModuleWithJIT })
- * })
- * ```
- *
- * If the target RPC endpoint and runtime support native HTTP compression,
- * this helper prefers that path and will not apply JIT calldata compression;
- * the JIT-based transform is used as a legacy/fallback path when HTTP
- * content-encoding is unavailable.
- * @pure
- */
-//! @__PURE__
-export const compressModuleWithJIT = (
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> => {
-  return import('./jit-compressor').then(({ compress_call }) =>
-    compressModule(input, init, compress_call),
-  );
-};

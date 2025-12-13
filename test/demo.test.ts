@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { compressModule, compressModuleWithJIT } from '../dist/_esm/index.node.js';
+import { compressModule } from '../dist/_esm/index.node.js';
+import { compress_call } from '../dist/_esm/jit-compressor.js';
 import { BASE_RPC_URL, loadFixture, PROXY_URL } from './utils';
 
 let proxyServer;
@@ -70,7 +71,6 @@ test('compressionFetch with public Base RPC (no compression support)', async () 
 });
 
 test('eth_call JIT compression demo using compressModule + viem', async () => {
-  const { compress_call } = await import('../dist/_esm/jit-compressor.js');
   const testData = loadFixture('36670119.raw.json');
 
   let bigTx = testData.transactions[0];
@@ -116,7 +116,7 @@ test('eth_call JIT compression demo using compressModule + viem', async () => {
   const client = createPublicClient({
     chain: base,
     transport: http(BASE_RPC_URL, {
-      fetchFn: compressModuleWithJIT,
+      fetchFn: (url, init) => compressModule(url, init, compress_call),
     }),
   });
 

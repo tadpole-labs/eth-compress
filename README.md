@@ -7,11 +7,9 @@ It combines [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-12.5.
 _Plug'n Play with viem & with a simple API_
 
 ### Scope
-  - **Only read-only `eth_call`'s are considered**
-  - Compression is only attempted above a size threshold and only applied if it strictly reduces total request size.
-    - Currently >1150 bytes for HTTP compression, and similarly gated for JIT calldata compression.
-  - The HTTP path uses standard `Content-Encoding` (e.g. gzip/deflate) negotiation; the EVM path rewrites eligible `eth_call`s through a transient decompressor contract and forwards calldata to the original `to` address via state overrides.
-  - For reference: Large `eth_call`s >70kb that compress to about **40% smaller payload size** (i.e. ~60% of the original bytes on the wire) can see roughly 30–40% latency reduction. (Precise benefits depend on many factors; this is a reasonable average-case projection.)
+  - Only **read-only** `eth_call`s.
+  - Only compresses above a size threshold, and only when it **strictly** reduces request size (HTTP: >1150 bytes; JIT calldata has a similar gate).
+  - HTTP uses standard `Content-Encoding` negotiation (e.g. gzip/deflate). EVM mode routes eligible `eth_call`s through a temporary decompressor contract and forwards to the original `to` via state overrides.
 
 ### Installation
 
@@ -37,39 +35,64 @@ const response = await compressModule('https://rpc.example.org', {
 });
 ```
 
-### How it works
+### Compression modes
 
-  - On the first request to a given RPC URL, inspects the `Accept-Encoding` response header to discover supported encodings, then compresses subsequent request bodies via
-     [`CompressionStreams API`](https://developer.mozilla.org/en-US/docs/Web/API/Compression_Streams_API)
-     (browser) or a [Node.js polyfill](https://github.com/tadpole-labs/eth-compress/blob/main/src/index.node.ts).
-  - Designed as the client-side piece for future client-to-server compression support in RPC nodes;
-  - Falls back to plain `fetch` & EVM-based compression if not supported by the RPC (see below).
+| Mode | Behavior |
+|------|----------|
+| `'passive'` | Discover support from response `Accept-Encoding` header |
+| `'proactive'` | Send gzip; discover alternative / lacking support via `Accept-Encoding` response header, error or success |
+| `'gzip'` / `'deflate'` | Use specified encoding directly |
+| `(payload) => ...` | Custom transform; server expected to understand |
 
 <br>
 
 ----
 ### viem integration
 
-`compressModule` and `compressModuleWithJIT` can be used as drop-in `fetchFn` modules for viem's `http` transport.
-
+Passive (default):
 ```ts
 import { createPublicClient, http } from 'viem';
-import { base } from 'viem/chains';
-import { compressModule, compressModuleWithJIT } from 'eth-compress';
+import { compressModule } from 'eth-compress';
 
-// HTTP compression only (transport-level)
-const httpCompressedClient = createPublicClient({
+const client = createPublicClient({
+  chain: base,
+  transport: http(rpcUrl, { fetchFn: compressModule }),
+});
+```
+
+Known gzip support:
+```ts
+import { compressModule } from 'eth-compress';
+
+const client = createPublicClient({
   chain: base,
   transport: http(rpcUrl, {
-    fetchFn: compressModule,
+    fetchFn: (url, init) => compressModule(url, init, 'gzip'),
   }),
 });
+```
 
-// HTTP compression + optional eth_call JIT calldata compression (application-level)
-const jitCompressedClient = createPublicClient({
+Proactive:
+```ts
+import { compressModule } from 'eth-compress';
+
+const client = createPublicClient({
   chain: base,
   transport: http(rpcUrl, {
-    fetchFn: compressModuleWithJIT,
+    fetchFn: (url, init) => compressModule(url, init, 'proactive'),
+  }),
+});
+```
+
+JIT calldata compression:
+```ts
+import { compressModule } from 'eth-compress';
+import { compress_call } from 'eth-compress/compressor';
+
+const client = createPublicClient({
+  chain: base,
+  transport: http(rpcUrl, {
+    fetchFn: (url, init) => compressModule(url, init, compress_call),
   }),
 });
 ```
@@ -85,8 +108,7 @@ const jitCompressedClient = createPublicClient({
 
 ### eth_call JIT calldata compression (application-level)
 
-For backwards compatibility and immediate benefit, calldata compression is implemented purely at the application layer: requests are rewritten client-side and executed as usual by existing nodes, using a just-in-time compiled decompressor contract that is injected via `stateOverride`/`stateDiff`.
-The goal here is the same: **reduce request size -> latency** for large `eth_call` payloads, and secondarily to **stay under eth_call gas/memory limits** by reducing calldata size and gas footprint.
+Implemented purely at the application layer: the client rewrites eligible `eth_call`s and injects a JIT decompressor via `stateOverride`/`stateDiff`.
 
 ```ts
 import { compress_call } from 'eth-compress/compressor';
@@ -105,8 +127,7 @@ const payload = {
 const compressedPayload = compress_call(payload); // safe to send instead of `payload`
 ```
 
-`compress_call` can be used directly or via `compressModuleWithJIT` (which feeds it into `compressModule` as a payload transform when HTTP content-encoding is not available for the target URL).
-For eligible `eth_call`s it chooses between:
+`compress_call` can be passed directly to `compressModule` as a custom transform. For eligible `eth_call`s it chooses between:
 
 - **JIT**: Compiles just-in-time, a one-off decompressor contract that reconstructs calldata to forward the call.
 - **FLZ / CD**: Uses `LibZip.flzCompress` and `LibZip.cdCompress` from `solady` for fast LZ and calldata RLE compression.
@@ -127,19 +148,21 @@ Selection logic (subject to change, but current behaviour):
 
 ### Important considerations
 
-The JIT calldata compressor is **experimental** and targets efficient compression of **read-only `eth_call`s for auxiliary dApp data loaded in bulk** (e.g. dashboards, analytics, non-critical views). It is **not recommended** for on-chain deployment or for critical paths in dApp flows that directly influence user operations. For separation of concerns, it is recommended to initialize **one client for auxiliary data** (with JIT compression enabled) and **another client for user operations**, and perform a separate requests for user‑facing operations.
+The JIT calldata compressor is **experimental** and intended for read-only `eth_call`s that fetch auxiliary/bulk dApp data (dashboards, analytics, non-critical views). Avoid using it for critical user flows. Ideally you use two viem clients if you intend to use that feature: one with JIT enabled for auxiliary reads, and one without for critical data.
 
 ### Compression Ratio & Gas
 | Tx Size Range      | # Txns | Avg. Tx Size| JIT Ratio    | FLZ Ratio        | CD Ratio         | JIT Gas         | FLZ Gas         | CD Gas          |
 |------------------------|--------|-------------------|:-------------------------:|:----------------:|:----------------:|:---------------:|:---------------:|:---------------:|
-| **> 8 KB**             | 129    | 14.90 kb          | 2.95x                     | **3.62x**        | 3.21x            | **8.02k**       | 323k            | 242k            |
+| **> 8 KB**             | 129    | 14.90 kb          | 2.99x                     | **3.62x**        | 3.21x            | **8.02k**       | 323k            | 242k            |
 | **3–8 KB**             | 260    | 4.82 kb           | 2.77x                     | 2.59x            | **2.81x**        | **4.45k**       | 138k            | 88.9k           |
-| **1.15–3 KB**          | 599    | 2.02 kb           | **2.89x**                 | 1.91x            | 2.58x            | **3.36k**       | 68.4k           | 35.8k           |
+| **1.15–3 KB**          | 599    | 2.02 kb           | **2.89x**                 | 1.91x            | 2.58x            | **3.35k**       | 68.4k           | 35.8k           |
 
-### Implementation notes & compression flavours
+<sub>Excludes txns not compressible &lt;70% of original size.</sub>
+
+### Compression flavours
 - **JIT calldata compiler (`compress_call` JIT mode)**: Views the calldata as a zero‑initialized memory image and synthesises bytecode that rebuilds it word-by-word in-place.
 
-  In the first pass it walks the data in 32-byte slices, detects non-zero segments per word, and for each word chooses the cheapest of three strategies: store a literal tail, assemble segments using SHL/OR, or reuse an earlier word via MLOAD/MSTORE, under a rough opcode-count cost model.
+  In the first pass it walks the data in 32-byte slices, detects non-zero segments per word, and for each word chooses the cheapest of three strategies: store a literal tail, assemble segments using SHL/OR, or reuse an earlier word via MLOAD/MSTORE.
   
   In the second pass it materialises this plan into concrete PUSH/MSTORE/SHL/OR/DUP opcodes, pre-seeds the stack with frequently used constants, and appends a small CALL/RETURNDATA stub that forwards the reconstructed calldata to the original `to` address.
   
