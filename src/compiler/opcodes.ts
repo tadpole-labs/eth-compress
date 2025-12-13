@@ -5,15 +5,19 @@ export const eq = (a: bigint, b: bigint): bigint => (a === b ? 1n : 0n);
 export const and = (a: bigint, b: bigint): bigint => a & b & MAX_256_BIT;
 export const or = (a: bigint, b: bigint): bigint => (a | b) & MAX_256_BIT;
 export const xor = (a: bigint, b: bigint): bigint => (a ^ b) & MAX_256_BIT;
+
+export const add = (a: bigint, b: bigint): bigint => (a + b) & MAX_256_BIT;
+export const sub = (a: bigint, b: bigint): bigint => (a - b) & MAX_256_BIT;
+
 export const shl = (shift: bigint, value: bigint): bigint => (value << shift) & MAX_256_BIT;
 export const shr = (shift: bigint, value: bigint): bigint => (value >> shift) & MAX_256_BIT;
-export const sub = (a: bigint, b: bigint): bigint => (a - b) & MAX_256_BIT;
+
 export const sigext = (byteSize: bigint, value: bigint): bigint => {
   const numBytes = Number(byteSize) + 1;
   const mask = (1n << BigInt(numBytes * 8)) - 1n;
   const signBit = 1n << BigInt(numBytes * 8 - 1);
   const maskedVal = value & mask;
-  const extended = maskedVal & signBit ? maskedVal | (~mask & MAX_256_BIT) : maskedVal;
+  const extended = (maskedVal & signBit) !== 0n ? maskedVal | (~mask & MAX_256_BIT) : maskedVal;
   return extended & MAX_256_BIT;
 };
 
