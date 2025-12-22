@@ -35,7 +35,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
-          version: 10.25.0
+          version: 10.26.1
 
       - name: Setup Node 25
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f
@@ -48,13 +48,13 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
         with:
-          bun-version: "1.3.4"
+          bun-version: "1.3.5"
           no-cache: true
 
       - name: Enable Corepack / pin pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@10.25.0 --activate
+          corepack prepare pnpm@10.26.1 --activate
           pnpm -v
 
       - name: Install deps (deterministic)

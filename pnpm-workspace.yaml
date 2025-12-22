@@ -1,4 +1,4 @@
-minimumReleaseAge: 1080
+minimumReleaseAge: 720
 packages:
   - src
   - '!**/test/**'
