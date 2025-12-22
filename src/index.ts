@@ -1,5 +1,6 @@
 export const MIN_BODY_SIZE = 1150;
 
+const _hasCS = typeof CompressionStream !== 'undefined';
 const _cache = new Map<string, string | -1>();
 const _enc = ['gzip', 'deflate'] as const;
 type SupportedEncoding = (typeof _enc)[number];
@@ -39,9 +40,8 @@ export async function compressModule(
   }
 
   const cached = _cache.get(url);
-  const hasCS = typeof CompressionStream !== 'undefined';
   const known = mode === 'gzip' || mode === 'deflate';
-  const encoding = !hasCS
+  const encoding = !_hasCS
     ? null
     : known
       ? (mode as SupportedEncoding)

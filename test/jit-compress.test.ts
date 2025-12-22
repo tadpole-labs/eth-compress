@@ -1,8 +1,7 @@
-import { LibZip } from 'solady';
+import { performance } from 'node:perf_hooks';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
 import { MIN_BODY_SIZE } from '../src/index';
 import * as u from './utils';
-import { performance } from 'node:perf_hooks';
 
 const { runEvmBytecode } = await import('./fixture/evm-runner.js');
 const {

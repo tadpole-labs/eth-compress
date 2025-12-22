@@ -1,5 +1,5 @@
 import { LibZip } from 'solady';
-import { _jitDecompressor } from './compiler';
+import { _jitDecompressor, DEC_ADDR } from './compiler';
 import { _normHex } from './compiler/utils';
 import { flzFwdBytecode, rleFwdBytecode } from './contracts';
 import { MIN_BODY_SIZE } from './index';
@@ -27,10 +27,13 @@ export const compress_call = function (payload: any, alg?: string): any {
 
   // Validation
   if (
-    (overrides && Object.keys(overrides).length > 0) ||
     !txObj?.to ||
     !txObj?.data ||
-    Object.keys(txObj).some((k) => !['to', 'data', 'from'].includes(k))
+    (() => {
+      if (overrides) for (const _ in overrides) return true;
+      for (const k in txObj) if (k !== 'to' && k !== 'data' && k !== 'from') return true;
+      return false;
+    })()
   ) {
     return payload;
   }
@@ -38,7 +41,7 @@ export const compress_call = function (payload: any, alg?: string): any {
   const originalSize = txObj.data.length;
   if (originalSize < MIN_BODY_SIZE) return payload;
 
-  const inputData = '0x' + _normHex(txObj.data);
+  const inputData = txObj.data;
   const to = txObj.to;
   const from = txObj.from;
 
@@ -70,7 +73,7 @@ export const compress_call = function (payload: any, alg?: string): any {
       bytecode = rleFwdBytecode(to);
     }
 
-    decompressorAddress = '0x' + 224n.toString(16).padStart(40, '0');
+    decompressorAddress = DEC_ADDR;
     fromAddr = from ? _normHex(from).padStart(16, '0') : undefined;
     balanceHex = '0';
     if (
@@ -93,10 +96,10 @@ export const compress_call = function (payload: any, alg?: string): any {
     code: bytecode,
     balance: '0x' + balanceHex,
   };
+
   const compressedTxObj: any = { to: decompressorAddress, data: calldata };
-  if (fromAddr) {
-    compressedTxObj.from = '0x' + fromAddr;
-  }
+
+  if (fromAddr) compressedTxObj.from = '0x' + fromAddr;
 
   return {
     ...payload,
