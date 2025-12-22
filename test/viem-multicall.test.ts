@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createPublicClient, http, parseEther } from 'viem';
 import { base } from 'viem/chains';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { compressModule } from '../dist/_esm/index.node.js';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
 import * as u from './utils';
@@ -18,6 +18,8 @@ const {
   mockEthCall,
   gen_call,
   loadFixture,
+  retry2,
+  sleep,
 } = u;
 
 let proxyServer;
@@ -31,6 +33,10 @@ beforeAll(async () => {
 
 afterAll(() => {
   if (proxyServer) proxyServer.kill();
+});
+
+afterEach(async () => {
+  await sleep(1000);
 });
 
 interface Transaction {
@@ -105,7 +111,7 @@ describe('Viem Multicall with JIT Compression', () => {
     });
 
     // Get current block number for consistent testing
-    const blockNumber = await client.getBlockNumber();
+    const blockNumber = await retry2(() => client.getBlockNumber());
     console.log(`\nTesting multicall with block number: ${blockNumber}`);
 
     // Build ~20 multicall contracts
@@ -146,10 +152,12 @@ describe('Viem Multicall with JIT Compression', () => {
     console.log(`Executing ${contracts.length} multicalls...`);
 
     // Perform multicall
-    const results = await client.multicall({
-      contracts: contracts as any,
-      blockNumber,
-    });
+    const results = await retry2(() =>
+      client.multicall({
+        contracts: contracts as any,
+        blockNumber,
+      }),
+    );
 
     console.log(`Multicall completed: ${results.length} results`);
 
@@ -196,7 +204,7 @@ describe('Viem Multicall with JIT Compression', () => {
       }),
     });
 
-    const blockNumber = await client.getBlockNumber();
+    const blockNumber = await retry2(() => client.getBlockNumber());
     console.log(`\nTesting JIT compression with block: ${blockNumber}`);
 
     for (let i = 0; i < largeTxs.length; i++) {
@@ -206,19 +214,21 @@ describe('Viem Multicall with JIT Compression', () => {
       );
 
       try {
-        const result = await client.call({
-          account: tx.from as `0x${string}`,
-          to: TEST_ADDR[1] as `0x${string}`,
-          data: tx.input as `0x${string}`,
-          blockNumber,
-          stateOverride: [
-            {
-              address: TEST_ADDR[1] as `0x${string}`,
-              code: ECHO_CONTRACT_BYTECODE as `0x${string}`,
-              balance: parseEther('1'),
-            },
-          ],
-        });
+        const result = await retry2(() =>
+          client.call({
+            account: tx.from as `0x${string}`,
+            to: TEST_ADDR[1] as `0x${string}`,
+            data: tx.input as `0x${string}`,
+            blockNumber,
+            stateOverride: [
+              {
+                address: TEST_ADDR[1] as `0x${string}`,
+                code: ECHO_CONTRACT_BYTECODE as `0x${string}`,
+                balance: parseEther('1'),
+              },
+            ],
+          }),
+        );
 
         const matches = result.data?.toLowerCase() === tx.input.toLowerCase();
         console.log(

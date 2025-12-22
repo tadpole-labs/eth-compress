@@ -1,17 +1,21 @@
 import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 import { compressModule } from '../dist/_esm/index.node.js';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
-import { BASE_RPC_URL } from './utils';
+import { BASE_RPC_URL, retry2, sleep } from './utils';
 
 describe('viem fetchFn patterns', () => {
+  afterEach(async () => {
+    await sleep(100);
+  });
+
   test('passive (default)', async () => {
     const client = createPublicClient({
       chain: base,
       transport: http(BASE_RPC_URL, { fetchFn: compressModule }),
     });
-    const block = await client.getBlockNumber();
+    const block = await retry2(() => client.getBlockNumber());
     expect(block).toBeGreaterThan(0n);
   });
 
@@ -22,7 +26,7 @@ describe('viem fetchFn patterns', () => {
         fetchFn: (url, init) => compressModule(url, init, 'passive'),
       }),
     });
-    const block = await client.getBlockNumber();
+    const block = await retry2(() => client.getBlockNumber());
     expect(block).toBeGreaterThan(0n);
   });
 
@@ -33,7 +37,7 @@ describe('viem fetchFn patterns', () => {
         fetchFn: (url, init) => compressModule(url, init, 'proactive'),
       }),
     });
-    const block = await client.getBlockNumber();
+    const block = await retry2(() => client.getBlockNumber());
     expect(block).toBeGreaterThan(0n);
   });
 
@@ -44,7 +48,7 @@ describe('viem fetchFn patterns', () => {
         fetchFn: (url, init) => compressModule(url, init, 'gzip'),
       }),
     });
-    const block = await client.getBlockNumber();
+    const block = await retry2(() => client.getBlockNumber());
     expect(block).toBeGreaterThan(0n);
   });
 
@@ -55,7 +59,7 @@ describe('viem fetchFn patterns', () => {
         fetchFn: (url, init) => compressModule(url, init, 'deflate'),
       }),
     });
-    const block = await client.getBlockNumber();
+    const block = await retry2(() => client.getBlockNumber());
     expect(block).toBeGreaterThan(0n);
   });
 
@@ -66,7 +70,7 @@ describe('viem fetchFn patterns', () => {
         fetchFn: (url, init) => compressModule(url, init, compress_call),
       }),
     });
-    const block = await client.getBlockNumber();
+    const block = await retry2(() => client.getBlockNumber());
     expect(block).toBeGreaterThan(0n);
   });
 
@@ -77,7 +81,7 @@ describe('viem fetchFn patterns', () => {
         fetchFn: (url, init) => compressModule(url, init, (p) => p),
       }),
     });
-    const block = await client.getBlockNumber();
+    const block = await retry2(() => client.getBlockNumber());
     expect(block).toBeGreaterThan(0n);
   });
 });

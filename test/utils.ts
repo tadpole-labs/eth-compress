@@ -2,10 +2,21 @@ export const BASE_RPC_URL = 'https://mainnet.base.org';
 export const PROXY_PORT = 42069;
 export const PROXY_URL = `http://localhost:${PROXY_PORT}`;
 
+export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+export async function retry2<T>(fn: () => Promise<T>, delayMs = 250): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    await sleep(delayMs);
+    return await fn();
+  }
+}
+
 export const RPC_ENDPOINTS = [
   'https://developer-access-mainnet.base.org',
   'https://base.drpc.org',
-  'https://base.llamarpc.com',
+  'https://mainnet-preconf.base.org',
 ];
 
 export const CORS_HEADERS = {

@@ -2,6 +2,7 @@ import { LibZip } from 'solady';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
 import { MIN_BODY_SIZE } from '../src/index';
 import * as u from './utils';
+import { performance } from 'node:perf_hooks';
 
 const { runEvmBytecode } = await import('./fixture/evm-runner.js');
 const {
@@ -106,10 +107,25 @@ const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> =
     jsonrpc: '2.0',
   };
 
+  const jitT0 = performance.now();
+  const jitPayload = compress_call(basePayload, 'jit');
+  const jitT1 = performance.now();
+  const jitCompressMs = jitT1 - jitT0;
+
+  const flzT0 = performance.now();
+  const flzPayload = compress_call(basePayload, 'flz');
+  const flzT1 = performance.now();
+  const flzCompressMs = flzT1 - flzT0;
+
+  const cdT0 = performance.now();
+  const cdPayload = compress_call(basePayload, 'cd');
+  const cdT1 = performance.now();
+  const cdCompressMs = cdT1 - cdT0;
+
   const payloads = {
-    jit: compress_call(basePayload, 'jit'),
-    flz: compress_call(basePayload, 'flz'),
-    cd: compress_call(basePayload, 'cd'),
+    jit: jitPayload,
+    flz: flzPayload,
+    cd: cdPayload,
   };
 
   const extractSize = (payload: any) => {
@@ -169,6 +185,9 @@ const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> =
     jitRatio: sizes.jitBytes / srcBytes,
     flzRatio: sizes.flzBytes / srcBytes,
     cdRatio: sizes.cdBytes / srcBytes,
+    jitCompressMs,
+    flzCompressMs,
+    cdCompressMs,
     jitRoundtripSuccess: results[0].success,
     flzRoundtripSuccess: results[1].success,
     cdRoundtripSuccess: results[2].success,
@@ -205,6 +224,24 @@ const summarizeResults = (
   const flzGas = comparableResults.map((r) => Number(r.flzGasUsed)).filter((v) => v);
   const cdGas = comparableResults.map((r) => Number(r.cdGasUsed)).filter((v) => v);
 
+  const jitCompressMsArr = results
+    .map((r) => (typeof r.jitCompressMs === 'number' ? r.jitCompressMs : undefined))
+    .filter((v) => typeof v === 'number');
+  const jitCompressTotalMs = jitCompressMsArr.reduce((a, b) => a + b, 0);
+  const jitCompressAvgMs = mean(jitCompressMsArr);
+
+  const flzCompressMsArr = results
+    .map((r) => (typeof r.flzCompressMs === 'number' ? r.flzCompressMs : undefined))
+    .filter((v) => typeof v === 'number');
+  const flzCompressTotalMs = flzCompressMsArr.reduce((a, b) => a + b, 0);
+  const flzCompressAvgMs = mean(flzCompressMsArr);
+
+  const cdCompressMsArr = results
+    .map((r) => (typeof r.cdCompressMs === 'number' ? r.cdCompressMs : undefined))
+    .filter((v) => typeof v === 'number');
+  const cdCompressTotalMs = cdCompressMsArr.reduce((a, b) => a + b, 0);
+  const cdCompressAvgMs = mean(cdCompressMsArr);
+
   let avgSrcSize = 0;
   if (opts?.includeAvgSrcSize) {
     const srcSizes = results.map((r) => r.srcBytes).filter((v) => v);
@@ -231,6 +268,21 @@ const summarizeResults = (
     `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(
       cdGas,
     ).toFixed(0)}`,
+  );
+  console.log(
+    `JIT compress time: total ${jitCompressTotalMs.toFixed(2)}ms | avg ${jitCompressAvgMs.toFixed(
+      4,
+    )}ms/tx`,
+  );
+  console.log(
+    `FLZ compress time: total ${flzCompressTotalMs.toFixed(2)}ms | avg ${flzCompressAvgMs.toFixed(
+      4,
+    )}ms/tx`,
+  );
+  console.log(
+    `CD compress time: total ${cdCompressTotalMs.toFixed(2)}ms | avg ${cdCompressAvgMs.toFixed(
+      4,
+    )}ms/tx`,
   );
 
   expect(successCnt.jit, 'All JIT transactions should pass').toBe(results.length);

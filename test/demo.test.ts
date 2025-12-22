@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
 import { compressModule } from '../dist/_esm/index.node.js';
 import { compress_call } from '../dist/_esm/jit-compressor.js';
-import { BASE_RPC_URL, loadFixture, PROXY_URL } from './utils';
+import { BASE_RPC_URL, loadFixture, PROXY_URL, retry2, sleep } from './utils';
 
 let proxyServer;
 
@@ -19,6 +19,10 @@ afterAll(() => {
   if (proxyServer) proxyServer.kill();
 });
 
+afterEach(async () => {
+  await sleep(100);
+});
+
 test('compressionFetch with viem - getBlockNumber', async () => {
   const client = createPublicClient({
     chain: base,
@@ -28,7 +32,7 @@ test('compressionFetch with viem - getBlockNumber', async () => {
   });
 
   console.log('=== REQUEST 1 ===');
-  const block1 = await client.getBlockNumber();
+  const block1 = await retry2(() => client.getBlockNumber());
   console.log('Block number:', block1);
 
   expect(block1).toBeGreaterThan(0n);
@@ -43,7 +47,7 @@ test('compressionFetch with viem - getBlock', async () => {
   });
 
   console.log('=== REQUEST 2 ===');
-  const block2 = await client.getBlock({ blockTag: 'latest' });
+  const block2 = await retry2(() => client.getBlock({ blockTag: 'latest' }));
   console.log('Block:', block2.number);
 
   expect(block2.number).toBeGreaterThan(0n);
@@ -58,13 +62,13 @@ test('compressionFetch with public Base RPC (no compression support)', async () 
   });
 
   console.log('=== REQUEST 3 (no compression support) ===');
-  const block3 = await client.getBlockNumber();
+  const block3 = await retry2(() => client.getBlockNumber());
   console.log('Block number:', block3);
 
   expect(block3).toBeGreaterThan(0n);
 
   console.log('=== REQUEST 4 (no compression support) ===');
-  const block4 = await client.getBlock({ blockTag: 'latest' });
+  const block4 = await retry2(() => client.getBlock({ blockTag: 'latest' }));
   console.log('Block:', block4.number);
 
   expect(block4.number).toBeGreaterThan(0n);
@@ -120,17 +124,19 @@ test('eth_call JIT compression demo using compressModule + viem', async () => {
     }),
   });
 
-  const result = await client.request({
-    method: 'eth_call',
-    params: [
-      {
-        from,
-        to,
-        data,
-      },
-      '0x22f8aa7',
-    ],
-  });
+  const result = await retry2(() =>
+    client.request({
+      method: 'eth_call',
+      params: [
+        {
+          from,
+          to,
+          data,
+        },
+        '0x25F5B9C',
+      ],
+    }),
+  );
 
   console.log('\nJIT DEMO eth_call RESULT:', result);
 
