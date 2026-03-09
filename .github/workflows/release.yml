@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
           fetch-depth: 0
@@ -49,25 +49,25 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
-          version: 10.26.1
+          version: 10.32.0
 
       - name: Setup Node 25
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
-          node-version: "25.1.0"
+          node-version: "25.8.0"
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        uses: oven-sh/setup-bun@ecf28ddc73e819eb6fa29df6b34ef8921c743461
         with:
-          bun-version: "1.3.5"
+          bun-version: "1.3.10"
           no-cache: true
 
       - name: Enable Corepack / pin pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@10.26.1 --activate
+          corepack prepare pnpm@10.32.0 --activate
           pnpm -v
 
       - name: Install deps (deterministic)
