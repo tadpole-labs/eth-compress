@@ -43,20 +43,29 @@ async function runEvmBytecode(bytecode, calldata, options = {}) {
       caller: callerAddr,
       origin: callerAddr,
       data: dataBytes,
-      gasLimit: BigInt(options.gasLimit || 10_000_000),
+      gasLimit: BigInt(options.gasLimit || 30_000_000),
       value: BigInt(options.value || 0),
     });
   } else {
     result = await vm.evm.runCode({
       code: codeBytes,
       data: dataBytes,
-      gasLimit: BigInt(options.gasLimit || 10_000_000),
+      gasLimit: BigInt(options.gasLimit || 30_000_000),
     });
   }
 
   const execResult = result.execResult || result;
 
   if (execResult.exceptionError) {
+    const returnValue = execResult.returnValue ? uint8ArrayToHex(execResult.returnValue) : '';
+    if (options.allowRevert && returnValue.length > 0) {
+      return {
+        returnValue: '0x' + returnValue,
+        returnInt: BigInt('0x' + returnValue),
+        gasUsed: execResult.executionGasUsed,
+        reverted: true,
+      };
+    }
     if (options.verbose && execResult.runState) {
       const { programCounter, opCode, stack, memory } = execResult.runState;
       console.error('\n=== EVM EXCEPTION ===');

@@ -3,18 +3,25 @@ import { add, and, not, or, shl, shr, sigext, sub, xor } from './opcodes';
 import { _normHex, _uint8ArrayToHex, initMemoryView, MemorySegment } from './utils';
 export const DEC_ADDR = '0x00000000000000000000000000000000000000e0';
 
+export type ForwardMode = 'call' | 'delegatecall' | 'staticcall' | 'none';
+
 const _pad64 = (s: string) => s.padStart(64, '0'),
   _zeroW = _pad64('0'),
   _cdsizeW = _pad64('20'),
   _decW = _pad64('e0'),
-  _retSuffix = '345f355af13d5f5f3e3d5ff3';
+  _returnSuffix = '3d5f5f3e3d5ff3',
+  _revertSuffix = '3d5f5f3e3d5ffd';
 
 export const _jitDecompressor = function (
   calldata: string,
   to: string,
   from?: string,
+  forward: ForwardMode = 'call',
+  revert = false,
+  clean_env = false,
 ): { bytecode: string; calldata: string; to: string; from?: string; balance: string } {
   const fromHex = from ? _normHex(from) : null;
+  const cleanEnv = clean_env || forward === 'none';
 
   let padding = 28,
     bestW: string | null = null,
@@ -59,6 +66,9 @@ export const _jitDecompressor = function (
   const pushOp = (op: number, d?: Uint8Array | null) => {
     ops.push(op);
     data.push(d ?? null);
+    // Byte offset of next opcode in the final bytecode stream.
+    // For PUSHn (0x60..0x7f), add the immediate length (n) as well.
+    programCnt += BigInt(1 + (op >= 0x60 && op <= 0x7f ? op - 0x5f : 0));
   };
 
   const pushS = (v: bigint, freqDelta: number = 1) => {
@@ -71,6 +81,8 @@ export const _jitDecompressor = function (
   const trackMem = (offset: number, size: number) => {
     trackedMemSize = roundUp32(offset + size);
   };
+
+  let programCnt = 0n;
 
   const addOp = (op: number, imm?: Uint8Array) => {
     if (op === 0x80) {
@@ -130,25 +142,27 @@ export const _jitDecompressor = function (
     if ((op >= 0x60 && op <= 0x7f) || op === 0x5f) {
       let v = 0n; // PUSH* and PUSH0
       for (const b of imm || []) v = (v << 8n) | BigInt(b);
-      if (v === selfbalance) {
-        pushS(v, 0);
-        pushOp(0x47);
-        return;
-      }
-      if (v === decAddr) {
-        pushS(v, 0);
-        pushOp(0x30);
-        return;
-      }
-      if (v === fromAddr) {
-        pushS(v, 0);
-        pushOp(0x33); // FROM ADDRESS
-        return;
-      }
-      if (v === 32n) {
-        pushS(v, 0);
-        pushOp(0x36); // CALLDATASIZE
-        return;
+      if (!cleanEnv) {
+        if (v === selfbalance) {
+          pushS(v, 0);
+          pushOp(0x47);
+          return;
+        }
+        if (v === decAddr) {
+          pushS(v, 0);
+          pushOp(0x30);
+          return;
+        }
+        if (v === fromAddr) {
+          pushS(v, 0);
+          pushOp(0x33); // FROM ADDRESS
+          return;
+        }
+        if (v === 32n) {
+          pushS(v, 0);
+          pushOp(0x36); // CALLDATASIZE
+          return;
+        }
       }
       if (v === BigInt(trackedMemSize) && v != 0n) {
         pushS(v, 0);
@@ -160,6 +174,11 @@ export const _jitDecompressor = function (
         const freqDelta = firstPass ? 1 : 0;
         pushS(v, freqDelta);
         pushOp(0x80 + idx);
+        return;
+      }
+      if (!firstPass && op !== 0x5f && v === programCnt) {
+        pushS(v, 0);
+        pushOp(0x58);
         return;
       }
       if (v === MAX_256_BIT) {
@@ -204,12 +223,16 @@ export const _jitDecompressor = function (
     return n;
   };
 
-  const pushCost = (v: bigint): number => (v === 0n ? 1 : 1 + bytesLen(v));
+  const pushCost = (v: bigint): number =>
+    v === 0n || v === 1n || (v !== 0n && v === BigInt(trackedMemSize))
+      ? 1
+      : v === MAX_256_BIT
+        ? 2
+        : 1 + bytesLen(v);
 
   const pushN = (value: number | bigint) => {
     const v = typeof value === 'bigint' ? value : BigInt(value);
     if (v > 0n && v === BigInt(trackedMemSize)) return addOp(0x59);
-    if (v === 32n) return addOp(0x36);
     if (v === 0n) return addOp(0x5f);
 
     let tmp = v;
@@ -263,7 +286,7 @@ export const _jitDecompressor = function (
     const literal = word.subarray(seg[0]! >>> 8);
     let literalVal = 0n;
     for (let i = 0; i < literal.length; i++) literalVal = (literalVal << 8n) | BigInt(literal[i]!);
-    const literalCost = literal.length + 1;
+    const literalCost = pushCost(literalVal);
     const shlCost = estShlCost(seg);
     let bestCost = literalCost;
     let bestEmit: () => void = () => emitPushB(literal);
@@ -447,6 +470,7 @@ export const _jitDecompressor = function (
   trackedMemSize = 0;
   mem = [];
   firstPass = false;
+  programCnt = 0n;
 
   const pre: { val: bigint; uses: number; net: number; p: number }[] = [];
   for (const [val, uses] of stackFreq) {
@@ -474,30 +498,30 @@ export const _jitDecompressor = function (
     else if (step.t === 'op') op(step.o);
   }
 
-  // CALL stack layout (top to bottom): gas, address, value, argsOffset, argsSize, retOffset, retSize
-  //
-  // - 0x5f5f: PUSH0 PUSH0 (retSize=0, retOffset=0)
-  // - pushN(view.dataLength): argsSize
-  // - pushN(padding): argsOffset (skip leading alignment bytes)
-  // - 0x34: CALLVALUE (value)
-  // - 0x5f35: PUSH0 CALLDATALOAD (address from calldata[0])
-  // - 0x5a: GAS (remaining gas)
-  // - 0xf1: CALL
-  //
-  // RETURNDATACOPY(destOffset=0, offset=0, length=RETURNDATASIZE):
-  // - 0x3d5f5f3e: RETURNDATASIZE PUSH0 PUSH0 RETURNDATACOPY
-  //
-  // RETURN(offset=0, size=RETURNDATASIZE):
-  // - 0x3d5ff3: RETURNDATASIZE PUSH0 RETURN
+  let suffix = '';
+  if (forward === 'none') {
+    pushN(view.dataLength);
+    pushN(padding);
+    op(revert ? 0xfd : 0xf3); // REVERT or RETURN the decompressed memory
+  } else {
+    // Stack: retSize=0, retOffset=0, argsSize, argsOffset
+    op(0x5f); // PUSH0 (retSize)
+    op(0x5f); // PUSH0 (retOffset)
+    pushN(view.dataLength); // argsSize
+    pushN(padding); // argsOffset
+    if (forward === 'call') {
+      // CALLVALUE PUSH0 CALLDATALOAD GAS CALL
+      suffix = '345f355af1';
+    } else if (forward === 'delegatecall') {
+      // PUSH0 CALLDATALOAD GAS DELEGATECALL (no value param)
+      suffix = '5f355af4';
+    } else {
+      // PUSH0 CALLDATALOAD GAS STATICCALL (no value param)
+      suffix = '5f355afa';
+    }
+    suffix += revert ? _revertSuffix : _returnSuffix;
+  }
 
-  op(0x5f); // PUSH0 (retSize)
-  op(0x5f); // PUSH0 (retOffset)
-  pushN(view.dataLength); // argsSize = actual data length
-  pushN(padding); // argsOffset = padding
-
-  // - CALLVALUE, load target address from calldata[0], GAS, CALL
-  // - RETURNDATACOPY(0, 0, RETURNDATASIZE)
-  // - RETURN(0, RETURNDATASIZE)
   let outLen = ops.length;
 
   for (let i = 0; i < ops.length; ++i)
@@ -510,14 +534,20 @@ export const _jitDecompressor = function (
     if (ops[i] >= 0x60 && ops[i] <= 0x7f && data[i]) out.set(data[i]!, o), (o += data[i]!.length);
   }
 
-  const bytecode = '0x' + _uint8ArrayToHex(out) + _retSuffix;
+  const bytecode = '0x' + _uint8ArrayToHex(out) + suffix;
   const calldataOut = '0x' + _pad64(originalTo);
+  const fromOut = cleanEnv
+    ? fromHex
+      ? fromHex.padStart(40, '0')
+      : undefined
+    : fromAddr.toString(16).padStart(40, '0');
+  const balanceOut = cleanEnv ? '0' : selfbalance.toString(16);
 
   return {
     bytecode,
     calldata: calldataOut,
     to: DEC_ADDR,
-    from: fromAddr.toString(16).padStart(40, '0'),
-    balance: selfbalance.toString(16),
+    from: fromOut,
+    balance: balanceOut,
   };
 };

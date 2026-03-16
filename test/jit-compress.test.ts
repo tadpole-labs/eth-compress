@@ -200,97 +200,141 @@ const testTransaction = async (tx: Transaction, txIndex: number): Promise<any> =
 
 import { describe, expect, test } from 'vitest';
 
-const summarizeResults = (
-  results: any[],
-  successCnt: { jit: number; flz: number; cd: number },
-  opts?: { includeAvgSrcSize?: boolean },
-) => {
-  // For fair comparison, only consider samples where **all** algorithms
-  // produced compression better than the threshold. This ensures that
-  // no algorithm is advantaged by being evaluated on an easier subset.
-  const comparableResults = results.filter(
-    (r) =>
-      r.jitRatio < COMPRESSION_THRESHOLD &&
-      r.flzRatio < COMPRESSION_THRESHOLD &&
-      r.cdRatio < COMPRESSION_THRESHOLD,
-  );
+const fmtGas = (v: number) => (v >= 1000 ? (v / 1000).toFixed(2) + 'k' : v.toFixed(0));
+const fmtKb = (v: number) => (v / 1000).toFixed(2) + ' kb';
+const fmtRatio = (v: number) => (1 / v).toFixed(2) + 'x';
 
-  const jitRatios = comparableResults.map((r) => r.jitRatio);
-  const flzRatios = comparableResults.map((r) => r.flzRatio);
-  const cdRatios = comparableResults.map((r) => r.cdRatio);
+const SIZE_RANGES = [
+  { label: '> 8 KB', min: 8000, max: Infinity },
+  { label: '3–8 KB', min: 3000, max: 8000 },
+  { label: '1.15–3 KB', min: 1150, max: 3000 },
+] as const;
 
-  const jitGas = comparableResults.map((r) => Number(r.jitGasUsed)).filter((v) => v);
-  const flzGas = comparableResults.map((r) => Number(r.flzGasUsed)).filter((v) => v);
-  const cdGas = comparableResults.map((r) => Number(r.cdGasUsed)).filter((v) => v);
-
-  const jitCompressMsArr = results
-    .map((r) => (typeof r.jitCompressMs === 'number' ? r.jitCompressMs : undefined))
-    .filter((v) => typeof v === 'number');
-  const jitCompressTotalMs = jitCompressMsArr.reduce((a, b) => a + b, 0);
-  const jitCompressAvgMs = mean(jitCompressMsArr);
-
-  const flzCompressMsArr = results
-    .map((r) => (typeof r.flzCompressMs === 'number' ? r.flzCompressMs : undefined))
-    .filter((v) => typeof v === 'number');
-  const flzCompressTotalMs = flzCompressMsArr.reduce((a, b) => a + b, 0);
-  const flzCompressAvgMs = mean(flzCompressMsArr);
-
-  const cdCompressMsArr = results
-    .map((r) => (typeof r.cdCompressMs === 'number' ? r.cdCompressMs : undefined))
-    .filter((v) => typeof v === 'number');
-  const cdCompressTotalMs = cdCompressMsArr.reduce((a, b) => a + b, 0);
-  const cdCompressAvgMs = mean(cdCompressMsArr);
-
-  let avgSrcSize = 0;
-  if (opts?.includeAvgSrcSize) {
-    const srcSizes = results.map((r) => r.srcBytes).filter((v) => v);
-    avgSrcSize = mean(srcSizes);
-  }
-
-  console.log(
-    `\n${results.length} txs | JIT: \x1b[32m${successCnt.jit}\x1b[0m | FLZ: \x1b[32m${successCnt.flz}\x1b[0m | CD: \x1b[32m${successCnt.cd}\x1b[0m`,
-  );
-  if (opts?.includeAvgSrcSize && avgSrcSize) {
-    console.log(`Avg Src Size: ${avgSrcSize.toFixed(1)} bytes`);
-  }
-  const jitAvg = mean(jitRatios);
-  const flzAvg = mean(flzRatios);
-  const cdAvg = mean(cdRatios);
-
-  console.log(
-    `Ratio (< ${COMPRESSION_THRESHOLD * 100}% on common sample set):\n` +
-      ` JIT ${(1 / jitAvg).toFixed(2)}x (${(jitAvg * 100).toFixed(2)}%, ${jitRatios.length}/${results.length}) |` +
-      ` FLZ ${(1 / flzAvg).toFixed(2)}x (${(flzAvg * 100).toFixed(2)}%, ${flzRatios.length}/${results.length}) |` +
-      ` CD ${(1 / cdAvg).toFixed(2)}x (${(cdAvg * 100).toFixed(2)}%, ${cdRatios.length}/${results.length})`,
-  );
-  console.log(
-    `Gas: JIT ${mean(jitGas).toFixed(0)} | FLZ ${mean(flzGas).toFixed(0)} | CD ${mean(
-      cdGas,
-    ).toFixed(0)}`,
-  );
-  console.log(
-    `JIT compress time: total ${jitCompressTotalMs.toFixed(2)}ms | avg ${jitCompressAvgMs.toFixed(
-      4,
-    )}ms/tx`,
-  );
-  console.log(
-    `FLZ compress time: total ${flzCompressTotalMs.toFixed(2)}ms | avg ${flzCompressAvgMs.toFixed(
-      4,
-    )}ms/tx`,
-  );
-  console.log(
-    `CD compress time: total ${cdCompressTotalMs.toFixed(2)}ms | avg ${cdCompressAvgMs.toFixed(
-      4,
-    )}ms/tx`,
-  );
-
+const summarizeResults = (results: any[], successCnt: { jit: number; flz: number; cd: number }) => {
   expect(successCnt.jit, 'All JIT transactions should pass').toBe(results.length);
   expect(successCnt.flz, 'All FLZ transactions should pass').toBe(results.length);
   expect(successCnt.cd, 'All CD transactions should pass').toBe(results.length);
   expect(results.length).toBeGreaterThan(0);
+
+  console.log(
+    `\n${results.length} txs | JIT: ${successCnt.jit} | FLZ: ${successCnt.flz} | CD: ${successCnt.cd}`,
+  );
+  console.log(
+    '| Tx Size Range | # Txns | Avg Size | JIT Ratio | FLZ Ratio | CD Ratio | JIT Gas | FLZ Gas | CD Gas |',
+  );
+  console.log(
+    '|---------------|--------|----------|-----------|-----------|----------|---------|---------|--------|',
+  );
+
+  for (const { label, min, max } of SIZE_RANGES) {
+    const bucket = results.filter((r) => r.srcBytes >= min && r.srcBytes < max);
+    if (!bucket.length) continue;
+
+    const comp = bucket.filter(
+      (r) =>
+        r.jitRatio < COMPRESSION_THRESHOLD &&
+        r.flzRatio < COMPRESSION_THRESHOLD &&
+        r.cdRatio < COMPRESSION_THRESHOLD,
+    );
+    if (!comp.length) continue;
+
+    const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const avgSize = avg(bucket.map((r) => r.srcBytes));
+    const jitR = avg(comp.map((r) => r.jitRatio));
+    const flzR = avg(comp.map((r) => r.flzRatio));
+    const cdR = avg(comp.map((r) => r.cdRatio));
+    const jitG = avg(comp.map((r) => Number(r.jitGasUsed)).filter(Boolean));
+    const flzG = avg(comp.map((r) => Number(r.flzGasUsed)).filter(Boolean));
+    const cdG = avg(comp.map((r) => Number(r.cdGasUsed)).filter(Boolean));
+
+    console.log(
+      `| ${label.padEnd(13)} | ${String(bucket.length).padStart(6)} | ${fmtKb(avgSize).padStart(8)} | ${fmtRatio(jitR).padStart(9)} | ${fmtRatio(flzR).padStart(9)} | ${fmtRatio(cdR).padStart(8)} | ${fmtGas(jitG).padStart(7)} | ${fmtGas(flzG).padStart(7)} | ${fmtGas(cdG).padStart(6)} |`,
+    );
+  }
 };
 
 describe('JIT Compression Test Suite', () => {
+  const forwardModes = [
+    { forward: 'call', revert: false, label: 'call + return' },
+    { forward: 'call', revert: true, label: 'call + revert' },
+    { forward: 'staticcall', revert: false, label: 'staticcall + return' },
+    { forward: 'staticcall', revert: true, label: 'staticcall + revert' },
+    { forward: 'delegatecall', revert: false, label: 'delegatecall + return' },
+    { forward: 'delegatecall', revert: true, label: 'delegatecall + revert' },
+    { forward: 'none', revert: true, label: 'none + revert (decompressed data)' },
+    { forward: 'none', revert: false, label: 'none + return (decompressed data)' },
+  ] as const;
+
+  const algs = ['jit', 'flz', 'cd'] as const;
+
+  for (const alg of algs) {
+    for (const mode of forwardModes) {
+      if (alg !== 'jit' && mode.forward === 'none') continue;
+
+      const testFn = test;
+
+      testFn(
+        `${alg} forward:${mode.label}`,
+        async () => {
+          const testData: TestData = loadFixture('36670119.raw.json');
+          const minLen = alg === 'jit' ? MIN_BODY_SIZE : MIN_BODY_SIZE * 2;
+          const tx = testData.transactions.find((t) => t.to && t.input?.length > minLen);
+          if (!tx) return;
+
+          const srcCd = '0x' + tx.input.replace(/^0x/, '').toLowerCase();
+          const isNone = mode.forward === 'none';
+
+          const compressed = (compress_call as any)(
+            {
+              method: 'eth_call',
+              params: [{ from: tx.from, to: tx.to, data: srcCd }, 'latest'],
+              id: 1,
+              jsonrpc: '2.0',
+            },
+            alg,
+            mode.forward,
+            mode.revert,
+          );
+
+          const stateOverride = compressed.params?.[2];
+          const decompressorAddress = Object.keys(stateOverride || {}).find(
+            (addr) => stateOverride[addr]?.code,
+          );
+          expect(decompressorAddress).toBeDefined();
+          if (!decompressorAddress)
+            throw new Error('Expected compressed payload with state override code');
+
+          const decompressorCode = stateOverride[decompressorAddress].code;
+
+          const evmOpts: any = { allowRevert: mode.revert };
+          if (!isNone) {
+            evmOpts.state = {
+              [tx.to]: { code: ECHO_CONTRACT_BYTECODE, balance: '0' },
+              [decompressorAddress]: {
+                code: decompressorCode,
+                balance: stateOverride[decompressorAddress].balance || '0x0',
+              },
+            };
+            evmOpts.contractAddress = decompressorAddress;
+            evmOpts.callerAddress = tx.from || CALLER_ADDRESS;
+          }
+
+          const result = await runEvmBytecode(decompressorCode, compressed.params[0].data, evmOpts);
+
+          expect(result, 'EVM execution should not return null').not.toBeNull();
+          expect(result?.returnValue?.toLowerCase()).toBe(srcCd.toLowerCase());
+
+          if (mode.revert) {
+            expect(result?.reverted, 'should revert when revert=true').toBe(true);
+          } else {
+            expect(result?.reverted, 'should not revert when revert=false').toBeFalsy();
+          }
+        },
+        60000,
+      );
+    }
+  }
+
   test('should perform roundtrip smoke test on latest Base blocks', async () => {
     const cached = loadFixture('base-blocks.json');
     const blocks = cached.blocks;
@@ -387,7 +431,7 @@ describe('JIT Compression Test Suite', () => {
       writeFileSync(failuresFile, JSON.stringify(failureReport, null, 2), 'utf8');
     }
 
-    summarizeResults(results, successCnt, { includeAvgSrcSize: true });
+    summarizeResults(results, successCnt);
   }, 60000);
 
   test('should not compress non-eth_call methods', () => {

@@ -95,59 +95,109 @@ const client = createPublicClient({
 
 ----
 
-### JIT calldata compression for `eth_call`
+### Calldata compression for `eth_call`
 
-Eligible `eth_call`s are compiled into a transient decompressor contract (passed via `stateDiff`).
+Eligible `eth_call`s are routed through a transient decompressor contract (injected via `stateDiff`).
 
 ```ts
 import { compress_call } from 'eth-compress/compressor';
 
 const payload = {
   method: 'eth_call',
-  params: [
-    {
-      to: '0x…',
-      data: '0x…',
-    },
-    'latest',
-  ],
+  params: [{ to: '0x…', data: '0x…' }, 'latest'],
 };
 
 const compressedPayload = compress_call(payload);
 ```
 
+#### Signature
+
+```ts
+compress_call(payload, alg?, forward?, revert?, clean_env?)
+```
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `payload` | `any` | — | JSON-RPC `eth_call` payload |
+| `alg` | `'jit' \| 'flz' \| 'cd'` | auto | Force a specific compression algorithm |
+| `forward` | `ForwardMode` | `'call'` | How the decompressor forwards to the target contract |
+| `revert` | `boolean` | `false` | If `true`, output data is returned via `REVERT` instead of `RETURN` |
+| `clean_env` | `boolean` | `false` | JIT-only: disable environment opcode substitutions (`SELFBALANCE`, `ADDRESS`, `CALLER`, `CALLDATASIZE`) |
+
+#### Forward modes
+
+`ForwardMode` controls what the generated decompressor bytecode does after decompression. All three algorithms (JIT, FLZ, CD) support the same forward modes.
+
+| `forward` | `revert` | Behavior |
+|---|---|---|
+| `'call'` | `false` | `CALL` target contract, `RETURN` its returndata |
+| `'call'` | `true` | `CALL` target contract, `REVERT` with its returndata |
+| `'staticcall'` | `false` | `STATICCALL` target, `RETURN` its returndata |
+| `'staticcall'` | `true` | `STATICCALL` target, `REVERT` with its returndata |
+| `'delegatecall'` | `false` | `DELEGATECALL` target, `RETURN` its returndata |
+| `'delegatecall'` | `true` | `DELEGATECALL` target, `REVERT` with its returndata |
+| `'none'` | `false` | `RETURN` the decompressed data directly (no forwarding) |
+| `'none'` | `true` | `REVERT` with the decompressed data directly (no forwarding) |
+
+When `forward` is `'none'`, `clean_env` is forced on — environment opcode substitutions are disabled since there is no forwarded call context.
+
+#### Examples
+
+Default (CALL + RETURN):
+```ts
+compress_call(payload);
+```
+
+STATICCALL forwarding with FLZ:
+```ts
+compress_call(payload, 'flz', 'staticcall');
+```
+
+DELEGATECALL, revert with returndata:
+```ts
+compress_call(payload, undefined, 'delegatecall', true);
+```
+
+Get decompressed calldata back via REVERT (useful as initcode or for off-chain extraction):
+```ts
+compress_call(payload, 'jit', 'none', true);
+```
+
+#### Algorithm selection
+
 `compress_call` can be passed directly to `compressModule` as a custom transform. For eligible `eth_call`s, it chooses between:
 
-- **JIT**: Compiles just-in-time, a one-off decompressor contract that reconstructs calldata to forward the call.
-- **FLZ / CD**: Uses `LibZip.flzCompress` and `LibZip.cdCompress` from `solady` for FastLZ / RLE compression.
+- **JIT**: Compiles a one-off decompressor contract that reconstructs calldata word-by-word.
+- **FLZ**: Uses `LibZip.flzCompress` from `solady` for FastLZ (LZ77) compression.
+- **CD**: Uses `LibZip.cdCompress` from `solady` for calldata run-length encoding.
 
-- **Size gating (JIT / EVM path)**:
-  - `< 1150 bytes (effective payload)`: no EVM-level compression.
+- **Size gating**:
+  - `< 1150 bytes`: no compression.
   - `≥ 1150 bytes`: compression considered.
-  - `size ≤ ~3000 bytes or > ~8000 bytes`: JIT is preferred.
-  - `~3000 ≤ size ≤ ~8000 bytes`: Best-of-3.
+  - `< ~3000 or ≥ ~8000 bytes`: JIT preferred (best ratio at small and large sizes).
+  - `~3000 – ~8000 bytes`: best of JIT, FLZ, and CD is picked.
 
 - **Algorithm choice**:
   - For mid-sized payloads, FLZ and CD are tried and the smaller output is chosen.
   - For larger ones, JIT is used directly, prioritizing gas efficiency.
-  - The thresholds are chosen with request header overhead and latency in mind,
-  aiming to keep the total request size within the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
+  - The thresholds are tuned for total request size, aiming for the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
 
 ### Important considerations
 
-The JIT calldata compressor is **experimental** and intended for auxiliary/bulk dApp read-only `eth_call`s. Use two viem clients to separate concerns.
+The calldata compressor is **experimental** and intended for auxiliary/bulk dApp read-only `eth_call`s. Use two viem clients to separate concerns.
 
 ### Compression Ratio & Gas
-| Tx Size Range      | # Txns | Avg. Tx Size| JIT Ratio    | FLZ Ratio        | CD Ratio         | JIT Gas         | FLZ Gas         | CD Gas          |
-|------------------------|--------|-------------------|:-------------------------:|:----------------:|:----------------:|:---------------:|:---------------:|:---------------:|
-| **> 8 KB**             | 129    | 14.90 kb          | 2.99x                     | **3.62x**        | 3.21x            | **8.02k**       | 323k            | 242k            |
-| **3–8 KB**             | 260    | 4.82 kb           | 2.77x                     | 2.59x            | **2.81x**        | **4.45k**       | 138k            | 88.9k           |
-| **1.15–3 KB**          | 599    | 2.02 kb           | **2.89x**                 | 1.91x            | 2.58x            | **3.35k**       | 68.4k           | 35.8k           |
 
-<sub>Excludes txns not compressible to &lt;70% of original size.</sub>
+| Tx Size Range | # Txns | Avg. Tx Size | JIT Ratio | FLZ Ratio | CD Ratio | JIT Gas | FLZ Gas | CD Gas |
+|---|---|---|---|---|---|---|---|---|
+| **> 8 KB** | 129 | 14.92 kb | **2.99x** | 3.63x | 2.90x | **8.02k** | 211.87k | 78.02k |
+| **3–8 KB** | 260 | 4.82 kb | **2.79x** | 2.61x | 2.29x | **4.45k** | 89.41k | 29.40k |
+| **1.15–3 KB** | 599 | 2.02 kb | **2.99x** | 1.99x | 1.80x | **3.38k** | 46.16k | 13.62k |
+
+<sub>Excludes txns not compressible to &lt;70% of its original size.</sub>
 
 ### Compression flavors
-- **JIT calldata compiler (`compress_call` JIT mode)**: Views calldata as a zero‑initialized memory image and synthesizes bytecode that rebuilds it word-by-word in-place.
+- **JIT calldata compiler**: Views calldata as a zero‑initialized memory image and synthesizes bytecode that rebuilds it word-by-word in-place.
 
   In the first pass it walks the data in 32-byte slices, detects non-zero segments per word, and for each word chooses the cheapest of three strategies: store a literal tail, assemble segments using SHL/OR, or reuse an earlier word via MLOAD/MSTORE.
 
@@ -155,5 +205,5 @@ The JIT calldata compressor is **experimental** and intended for auxiliary/bulk 
 
   The 4‑byte selector is right‑aligned in the first 32‑byte slot so that the rest of the calldata can be reconstructed on mostly word‑aligned boundaries, with the decompressor stateDiff being placed at `0xe0` to obtain this common offset from `ADDRESS` with a single opcode instead of PUSH1 + literal.
 
-Both the FastLZ and calldata-RLE forwarders are minimally adapted from Solady's [`LibZip.sol`](https://github.com/Vectorized/solady/blob/main/src/utils/LibZip.sol) and inlined as raw bytecode. To avoid Solidity's wrapper overhead the code is compiled from pure yul.
+- **FastLZ (FLZ)** and **calldata-RLE (CD)** forwarders are minimally adapted from Solady's [`LibZip.sol`](https://github.com/Vectorized/solady/blob/main/src/utils/LibZip.sol) and inlined as raw bytecode compiled from pure Yul. Both support all forwarding modes (`call`, `staticcall`, `delegatecall`) and the `revert` flag, with the target address patched into the bytecode at generation time.
 

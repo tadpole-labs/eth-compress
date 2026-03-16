@@ -1,8 +1,10 @@
 import { LibZip } from 'solady';
 import { _jitDecompressor, DEC_ADDR } from './compiler';
+import type { ForwardMode } from './compiler/jit';
 import { _normHex } from './compiler/utils';
 import { flzFwdBytecode, rleFwdBytecode } from './contracts';
 import { MIN_BODY_SIZE } from './index';
+
 /**
  * Compresses eth_call payload using JIT, FastLZ (FLZ), or calldata RLE (CD) compression.
  * Auto-selects best algorithm if not specified. Only compresses if >800 bytes and beneficial.
@@ -18,7 +20,13 @@ import { MIN_BODY_SIZE } from './index';
  * @pure
  */
 //! @__PURE__
-export const compress_call = function (payload: any, alg?: string): any {
+export const compress_call = function (
+  payload: any,
+  alg?: string,
+  forward: ForwardMode = 'call',
+  revert = false,
+  clean_env = false,
+): any {
   const { method, params } = payload;
   if (method && method !== 'eth_call') return payload;
   const txObj = params?.[0] || payload;
@@ -44,6 +52,7 @@ export const compress_call = function (payload: any, alg?: string): any {
   const inputData = txObj.data;
   const to = txObj.to;
   const from = txObj.from;
+  const noForward = forward === 'none';
 
   let bytecode: string;
   let calldata: string;
@@ -51,15 +60,15 @@ export const compress_call = function (payload: any, alg?: string): any {
   let fromAddr: string | undefined;
   let balanceHex: string;
 
-  if (alg === 'jit' || (!alg && (originalSize < 3000 || originalSize >= 8000))) {
-    const result = _jitDecompressor(inputData, to, from);
+  if (noForward || alg === 'jit' || (!alg && (originalSize < 3000 || originalSize >= 8000))) {
+    const result = _jitDecompressor(inputData, to, from, forward, revert, clean_env);
     bytecode = result.bytecode;
     calldata = result.calldata;
     decompressorAddress = result.to;
     fromAddr = result.from;
     balanceHex = result.balance;
   } else {
-    const jit = !alg ? _jitDecompressor(inputData, to, from) : null;
+    const jit = !alg ? _jitDecompressor(inputData, to, from, forward, revert, clean_env) : null;
     const flzData = alg === 'flz' || !alg ? LibZip.flzCompress(inputData) : null;
     const cdData = alg === 'cd' || (!alg && flzData) ? LibZip.cdCompress(inputData) : null;
     const useFlz =
@@ -67,10 +76,15 @@ export const compress_call = function (payload: any, alg?: string): any {
 
     if (useFlz) {
       calldata = flzData!;
-      bytecode = flzFwdBytecode(to);
+      bytecode = flzFwdBytecode(to, forward, revert);
     } else {
-      calldata = cdData!;
-      bytecode = rleFwdBytecode(to);
+      // Solady cdCompress negates the first 4 bytes (selector dispatch); XOR it back
+      const h = cdData!.replace(/^0x/, '');
+      let sel = '';
+      for (let i = 0; i < 8; i += 2)
+        sel += (parseInt(h.substring(i, i + 2), 16) ^ 0xff).toString(16).padStart(2, '0');
+      calldata = '0x' + sel + h.substring(8);
+      bytecode = rleFwdBytecode(to, forward, revert);
     }
 
     decompressorAddress = DEC_ADDR;
