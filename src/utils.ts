@@ -1,3 +1,6 @@
+export const MAX_128_BIT = (1n << 128n) - 1n;
+export const MAX_256_BIT = (1n << 256n) - 1n;
+
 export const _normHex = (hex: string): string =>
   (hex.charCodeAt(0) === 48 && (hex.charCodeAt(1) | 32) === 120 ? hex.slice(2) : hex).toLowerCase();
 

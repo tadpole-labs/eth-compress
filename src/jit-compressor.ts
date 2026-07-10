@@ -1,13 +1,12 @@
-import { LibZip } from 'solady';
-import { _jitDecompressor, DEC_ADDR } from './compiler';
-import type { ForwardMode } from './compiler/jit';
-import { _normHex } from './compiler/utils';
-import { flzFwdBytecode, rleFwdBytecode } from './contracts';
-import { MIN_BODY_SIZE } from './index';
+import { cdCompress, flzCompress } from './compression.ts';
+import { flzFwdBytecode, rleFwdBytecode } from './contracts.ts';
+import { MIN_BODY_SIZE } from './index.ts';
+import { _jitDecompressor, DEC_ADDR, type ForwardMode } from './jit.ts';
+import { _normHex } from './utils.ts';
 
 /**
  * Compresses eth_call payload using JIT, FastLZ (FLZ), or calldata RLE (CD) compression.
- * Auto-selects best algorithm if not specified. Only compresses if >800 bytes and beneficial.
+ * Auto-selects best algorithm if not specified. Only compresses inputs ≥ MIN_BODY_SIZE and when beneficial.
  *
  * Only applies compression to calls that:
  * - have no state overrides
@@ -60,7 +59,9 @@ export const compress_call = function (
   let fromAddr: string | undefined;
   let balanceHex: string;
 
-  if (noForward || alg === 'jit' || (!alg && (originalSize < 3000 || originalSize >= 8000))) {
+  // Auto (no alg) compares JIT/FLZ/CD and keeps the smallest for every size; only an
+  // explicit alg or forward:'none' (return mode, JIT-only) skips the comparison.
+  if (noForward || alg === 'jit') {
     const result = _jitDecompressor(inputData, to, from, forward, revert, clean_env);
     bytecode = result.bytecode;
     calldata = result.calldata;
@@ -68,39 +69,42 @@ export const compress_call = function (
     fromAddr = result.from;
     balanceHex = result.balance;
   } else {
-    const jit = !alg ? _jitDecompressor(inputData, to, from, forward, revert, clean_env) : null;
-    const flzData = alg === 'flz' || !alg ? LibZip.flzCompress(inputData) : null;
-    const cdData = alg === 'cd' || (!alg && flzData) ? LibZip.cdCompress(inputData) : null;
-    const useFlz =
-      alg === 'flz' || (!alg && flzData && (!cdData || flzData.length < cdData.length));
+    const fwdFrom = from ? _normHex(from).padStart(16, '0') : undefined;
+    const candidates: ReturnType<typeof _jitDecompressor>[] = [];
 
-    if (useFlz) {
-      calldata = flzData!;
-      bytecode = flzFwdBytecode(to, forward, revert);
-    } else {
-      // Solady cdCompress negates the first 4 bytes (selector dispatch); XOR it back
-      const h = cdData!.replace(/^0x/, '');
+    if (alg === 'flz' || !alg) {
+      candidates.push({
+        bytecode: flzFwdBytecode(to, forward, revert),
+        calldata: flzCompress(inputData),
+        to: DEC_ADDR,
+        from: fwdFrom,
+        balance: '0',
+      });
+    }
+    if (alg === 'cd' || !alg) {
+      // cdCompress (Solady port) negates the first 4 bytes (selector-dispatch guard); XOR them back.
+      const h = cdCompress(inputData).replace(/^0x/, '');
       let sel = '';
       for (let i = 0; i < 8; i += 2)
-        sel += (parseInt(h.substring(i, i + 2), 16) ^ 0xff).toString(16).padStart(2, '0');
-      calldata = '0x' + sel + h.substring(8);
-      bytecode = rleFwdBytecode(to, forward, revert);
+        sel += (Number.parseInt(h.substring(i, i + 2), 16) ^ 0xff).toString(16).padStart(2, '0');
+      candidates.push({
+        bytecode: rleFwdBytecode(to, forward, revert),
+        calldata: '0x' + sel + h.substring(8),
+        to: DEC_ADDR,
+        from: fwdFrom,
+        balance: '0',
+      });
     }
+    if (!alg) candidates.push(_jitDecompressor(inputData, to, from, forward, revert, clean_env));
 
-    decompressorAddress = DEC_ADDR;
-    fromAddr = from ? _normHex(from).padStart(16, '0') : undefined;
-    balanceHex = '0';
-    if (
-      !alg &&
-      jit &&
-      jit.bytecode.length + jit.calldata.length < bytecode.length + calldata.length
-    ) {
-      bytecode = jit.bytecode;
-      calldata = jit.calldata;
-      decompressorAddress = jit.to;
-      fromAddr = jit.from;
-      balanceHex = jit.balance;
-    }
+    const best = candidates.reduce((a, b) =>
+      b.bytecode.length + b.calldata.length < a.bytecode.length + a.calldata.length ? b : a,
+    );
+    bytecode = best.bytecode;
+    calldata = best.calldata;
+    decompressorAddress = best.to;
+    fromAddr = best.from;
+    balanceHex = best.balance;
   }
 
   // Skip if not beneficial

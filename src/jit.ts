@@ -1,6 +1,20 @@
-import { MAX_128_BIT, MAX_256_BIT } from './constants';
-import { add, and, not, or, shl, shr, sigext, sub, xor } from './opcodes';
-import { _normHex, _uint8ArrayToHex, initMemoryView, MemorySegment } from './utils';
+import type { MemorySegment } from './utils.ts';
+import { _normHex, _uint8ArrayToHex, initMemoryView, MAX_128_BIT, MAX_256_BIT } from './utils.ts';
+
+const not = (a: bigint): bigint => ~a & MAX_256_BIT;
+const and = (a: bigint, b: bigint): bigint => a & b & MAX_256_BIT;
+const or = (a: bigint, b: bigint): bigint => (a | b) & MAX_256_BIT;
+const xor = (a: bigint, b: bigint): bigint => (a ^ b) & MAX_256_BIT;
+const add = (a: bigint, b: bigint): bigint => (a + b) & MAX_256_BIT;
+const sub = (a: bigint, b: bigint): bigint => (a - b) & MAX_256_BIT;
+const shl = (shift: bigint, value: bigint): bigint => (value << shift) & MAX_256_BIT;
+const shr = (shift: bigint, value: bigint): bigint => (value >> shift) & MAX_256_BIT;
+const sigext = (byteSize: bigint, value: bigint): bigint => {
+  if (byteSize >= 31n) return value & MAX_256_BIT;
+  const bits = Number((byteSize + 1n) * 8n);
+  return BigInt.asUintN(256, BigInt.asIntN(bits, value));
+};
+
 export const DEC_ADDR = '0x00000000000000000000000000000000000000e0';
 
 export type ForwardMode = 'call' | 'delegatecall' | 'staticcall' | 'none';
@@ -301,18 +315,6 @@ export const _jitDecompressor = function (
       };
     }
 
-    // Try SUB: PUSH0, PUSH(x), SUB
-    const subVal = sub(0n, literalVal);
-    const subCost = pushCost(subVal) + 2;
-    if (subCost < bestCost) {
-      bestCost = subCost;
-      bestEmit = () => {
-        emitPushN(0);
-        emitPushN(subVal);
-        emitOp(0x03);
-      };
-    }
-
     // Try SIGNEXTEND
     for (let numBytes = 1; numBytes < literal.length; numBytes++) {
       const mask = (1n << BigInt(numBytes * 8)) - 1n;
@@ -335,26 +337,6 @@ export const _jitDecompressor = function (
       }
     }
 
-    // Try SHIFT+NOT
-    for (let shiftBits = 8; shiftBits <= 248; shiftBits += 8) {
-      const shifted = shr(BigInt(shiftBits), literalVal);
-      if (shifted === 0n) break;
-
-      const notShifted = not(shifted);
-      const reconstructed = shl(BigInt(shiftBits), notShifted);
-      if (reconstructed === literalVal) {
-        const shiftNotCost = pushCost(notShifted) + pushCost(BigInt(shiftBits)) + 2; // PUSH + PUSH + SHL + NOT
-        if (shiftNotCost < bestCost) {
-          bestCost = shiftNotCost;
-          bestEmit = () => {
-            emitPushN(notShifted);
-            emitPushN(shiftBits);
-            emitOp(0x1b);
-            emitOp(0x19);
-          };
-        }
-      }
-    }
     // Try SHL/OR
     if (shlCost < bestCost) {
       bestCost = shlCost;
@@ -463,7 +445,7 @@ export const _jitDecompressor = function (
     ++wordIndex;
   }
 
-  //2nd pass: preseed dictionary + emit final ops
+  // 2nd pass: preseed dictionary + emit final ops
   ops = [];
   data = [];
   stack = [];

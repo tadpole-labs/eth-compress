@@ -1,6 +1,6 @@
 import { execFileSync } from 'child_process';
 import { type BuildOptions, build } from 'esbuild';
-import { copyFileSync, mkdirSync } from 'fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 const srcDir = join(process.cwd(), 'src');
@@ -16,7 +16,7 @@ mkdirSync(typesDir, { recursive: true });
 
 // Shared build configuration
 const baseConfig: Partial<BuildOptions> = {
-  sourcemap: true,
+  sourcemap: false,
   minify: true,
   minifyWhitespace: true,
   minifyIdentifiers: true,
@@ -27,7 +27,7 @@ const baseConfig: Partial<BuildOptions> = {
 const bundledConfig: Partial<BuildOptions> = {
   ...baseConfig,
   bundle: true,
-  external: ['solady', 'node:*'],
+  external: ['node:*'],
 };
 
 const compressorConfig: Partial<BuildOptions> = {
@@ -35,20 +35,10 @@ const compressorConfig: Partial<BuildOptions> = {
   bundle: true,
   platform: 'neutral',
   target: ['es2020'],
-  external: ['solady'],
 };
 
 async function buildAll() {
   console.log('Building ESM bundles...');
-
-  await build({
-    ...bundledConfig,
-    entryPoints: [join(srcDir, 'index.node.ts')],
-    format: 'esm',
-    platform: 'node',
-    target: ['node20'],
-    outfile: join(esmDir, 'index.node.js'),
-  });
 
   await build({
     ...bundledConfig,
@@ -57,7 +47,6 @@ async function buildAll() {
     platform: 'browser',
     target: ['chrome80', 'edge80', 'firefox113', 'safari16.4'],
     outfile: join(esmDir, 'index.js'),
-    external: ['solady'],
     define: {
       'process.env.NODE_ENV': '"production"',
     },
@@ -74,21 +63,11 @@ async function buildAll() {
 
   await build({
     ...bundledConfig,
-    entryPoints: [join(srcDir, 'index.node.ts')],
-    format: 'cjs',
-    platform: 'node',
-    target: ['node20'],
-    outfile: join(cjsDir, 'index.node.cjs'),
-  });
-
-  await build({
-    ...bundledConfig,
     entryPoints: [join(srcDir, 'index.ts')],
     format: 'cjs',
     platform: 'node',
     target: ['node20'],
     outfile: join(cjsDir, 'index.cjs'),
-    external: ['solady'],
   });
 
   await build({
@@ -100,22 +79,28 @@ async function buildAll() {
 
   console.log('Generating TypeScript declarations...');
 
-  execFileSync(
-    'tsc',
-    ['--emitDeclarationOnly', '--declaration', '--declarationMap', '--outDir', typesDir],
-    {
-      stdio: 'inherit',
-    },
-  );
+  execFileSync('tsc', ['--emitDeclarationOnly', '--declaration', '--outDir', typesDir], {
+    stdio: 'inherit',
+  });
+  
+  const rewriteDtsExtensions = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) rewriteDtsExtensions(full);
+      else if (name.endsWith('.d.ts')) {
+        const src = readFileSync(full, 'utf8');
+        const out = src.replace(/(['"]\.\.?\/[^'"]*)\.ts(['"])/g, '$1.js$2');
+        if (out !== src) writeFileSync(full, out);
+      }
+    }
+  };
+  rewriteDtsExtensions(typesDir);
 
   console.log('Copying package.json, README and LICENSE to dist...');
 
   copyFileSync(join(process.cwd(), 'package.json'), join(distDir, 'package.json'));
   copyFileSync(join(process.cwd(), 'README.md'), join(distDir, 'README.md'));
   copyFileSync(join(process.cwd(), 'LICENSE'), join(distDir, 'LICENSE'));
-
-  const tsFiles = ['index.ts', 'index.node.ts', 'jit-compressor.ts'];
-  for (const file of tsFiles) copyFileSync(join(srcDir, file), join(distDir, file));
 
   console.log('Build complete!');
 }

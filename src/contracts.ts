@@ -1,5 +1,5 @@
-import type { ForwardMode } from './compiler/jit';
-import { _normHex } from './compiler/utils';
+import type { ForwardMode } from './jit.ts';
+import { _normHex } from './utils.ts';
 
 const _flzLoop = (a: number, b: number, c: number, d: number, e: number) => {
   const h = (v: number) => v.toString(16).padStart(2, '0');
@@ -38,7 +38,7 @@ const _rleTail = (a: string, b: string) =>
   a +
   '56';
 
-/** Solady LibZip. FLZ*/
+/** FLZ decompressor/forwarder. */
 //! @__PURE__
 export const flzFwdBytecode = (
   address: string,
@@ -71,7 +71,7 @@ export const flzFwdBytecode = (
   );
 };
 
-/** Solady LibZip. RLE.*/
+/** Calldata RLE decompressor/forwarder. */
 //! @__PURE__
 export const rleFwdBytecode = (
   address: string,

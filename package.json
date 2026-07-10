@@ -1,6 +1,6 @@
 {
   "name": "eth-compress",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": false,
   "type": "module",
   "description": "Client-to-server compression (viem-compatible) module for compressed, gas-efficient, low-latency eth_call requests.",
@@ -19,32 +19,18 @@
   "homepage": "https://github.com/tadpole-labs/eth-compress",
   "bugs": "https://github.com/tadpole-labs/eth-compress/issues",
   "license": "Apache-2.0 OR MIT",
-  "main": "./_esm/index.node.js",
+  "main": "./_esm/index.js",
   "types": "./_types/index.d.ts",
   "typings": "./_types/index.d.ts",
   "exports": {
     ".": {
       "types": "./_types/index.d.ts",
-      "node": {
-        "types": "./_types/index.d.ts",
-        "import": "./_esm/index.node.js",
-        "require": "./_cjs/index.node.cjs",
-        "default": "./_esm/index.node.js"
-      },
-      "browser": {
-        "types": "./_types/index.d.ts",
-        "import": "./_esm/index.js",
-        "require": "./_cjs/index.cjs",
-        "default": "./_esm/index.js"
-      },
-      "development": "./index.node.ts",
-      "import": "./_esm/index.node.js",
-      "require": "./_cjs/index.node.cjs",
-      "default": "./_esm/index.node.js"
+      "import": "./_esm/index.js",
+      "require": "./_cjs/index.cjs",
+      "default": "./_esm/index.js"
     },
     "./compressor": {
       "types": "./_types/jit-compressor.d.ts",
-      "development": "./jit-compressor.ts",
       "import": "./_esm/jit-compressor.js",
       "require": "./_cjs/jit-compressor.cjs",
       "default": "./_esm/jit-compressor.js"
@@ -69,24 +55,19 @@
     }
   },
   "files": [
-    "*.ts",
-    "*.d.ts",
     "_esm/**/*.js",
-    "_esm/**/*.js.map",
     "_cjs/**/*.cjs",
-    "_cjs/**/*.cjs.map",
     "_types/**/*.d.ts",
-    "_types/**/*.d.ts.map",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "pnpm run clean && bun scripts/build.ts",
+    "build": "pnpm run clean && node scripts/build.ts",
     "clean": "rm -rf dist *.tgz",
-    "test:jit": "vitest run test/jit-compress.test.ts --config test/vitest.config.ts",
-    "test:demo": "vitest run test/demo.test.ts --config test/vitest.config.ts",
-    "test:viem": "vitest run test/viem-multicall.test.ts --config test/vitest.config.ts",
-    "test": "pnpm run build && pnpm run test:jit && pnpm run test:demo && pnpm run test:viem",
+    "test:unit": "node --test test/roundtrip.test.ts test/validation.test.ts test/http-encoding.test.ts",
+    "test:integration": "node --test test/integration.test.ts",
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "bench": "node test/bench.ts",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "format": "biome format --write .",
@@ -96,31 +77,16 @@
     "ci:install": "pnpm install --frozen-lockfile --ignore-scripts"
   },
   "engines": {
-    "node": ">=22",
-    "pnpm": ">=10"
+    "node": ">=22.18",
+    "pnpm": ">=11"
   },
-  "packageManager": "pnpm@10.32.1",
-  "pnpm": {
-    "peerDependencyRules": {
-      "ignoreMissing": [
-        "@types/react"
-      ]
-    }
-  },
-  "dependencies": {
-    "solady": "0.1.26"
-  },
+  "packageManager": "pnpm@11.10.0",
   "devDependencies": {
-    "@biomejs/biome": "2.4.7",
-    "@ethereumjs/common": "10.1.1",
-    "@ethereumjs/util": "10.1.1",
-    "@ethereumjs/vm": "10.1.1",
-    "@types/bun": "1.3.10",
-    "@types/node": "25.5.0",
-    "esbuild": "0.27.4",
-    "typescript": "5.9.3",
-    "viem": "2.47.4",
-    "vitest": "4.1.0"
+    "@biomejs/biome": "2.5.2",
+    "@types/node": "26.1.1",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2",
+    "viem": "2.55.0"
   },
   "browserslist": [
     ">0.3%",

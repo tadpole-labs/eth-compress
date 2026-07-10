@@ -168,19 +168,20 @@ compress_call(payload, 'jit', 'none', true);
 `compress_call` can be passed directly to `compressModule` as a custom transform. For eligible `eth_call`s, it chooses between:
 
 - **JIT**: Compiles a one-off decompressor contract that reconstructs calldata word-by-word.
-- **FLZ**: Uses `LibZip.flzCompress` from `solady` for FastLZ (LZ77) compression.
-- **CD**: Uses `LibZip.cdCompress` from `solady` for calldata run-length encoding.
+- **FLZ**: FastLZ (LZ77) compression — a local JS port of solady's `LibZip.flzCompress`.
+- **CD**: Calldata run-length encoding — a local JS port of solady's `LibZip.cdCompress`.
 
 - **Size gating**:
   - `< 1150 bytes`: no compression.
   - `≥ 1150 bytes`: compression considered.
-  - `< ~3000 or ≥ ~8000 bytes`: JIT preferred (best ratio at small and large sizes).
-  - `~3000 – ~8000 bytes`: best of JIT, FLZ, and CD is picked.
 
 - **Algorithm choice**:
-  - For mid-sized payloads, FLZ and CD are tried and the smaller output is chosen.
-  - For larger ones, JIT is used directly, prioritizing gas efficiency.
+  - Auto-select (no explicit `alg`) runs all three algorithms for every eligible call and keeps
+    the smallest on-chain footprint (decompressor bytecode + calldata); if none beats the raw
+    call, it is sent uncompressed.
   - The thresholds are tuned for total request size, aiming for the [Ethernet MTU](https://en.wikipedia.org/wiki/Maximum_transmission_unit).
+  - Pass an explicit `alg` (`'jit' | 'flz' | 'cd'`) to force one; `forward: 'none'` (return mode)
+    always uses JIT.
 
 ### Important considerations
 
@@ -190,11 +191,11 @@ The calldata compressor is **experimental** and intended for auxiliary/bulk dApp
 
 | Tx Size Range | # Txns | Avg. Tx Size | JIT Ratio | FLZ Ratio | CD Ratio | JIT Gas | FLZ Gas | CD Gas |
 |---|---|---|---|---|---|---|---|---|
-| **> 8 KB** | 129 | 14.92 kb | **2.99x** | 3.63x | 2.90x | **8.02k** | 211.87k | 78.02k |
+| **> 8 KB** | 129 | 14.92 kb | **2.99x** | 3.63x | 2.90x | **7.96k** | 211.81k | 77.96k |
 | **3–8 KB** | 260 | 4.82 kb | **2.79x** | 2.61x | 2.29x | **4.45k** | 89.41k | 29.40k |
-| **1.15–3 KB** | 599 | 2.02 kb | **2.99x** | 1.99x | 1.80x | **3.38k** | 46.16k | 13.62k |
+| **1.15–3 KB** | 599 | 2.02 kb | **2.99x** | 1.99x | 1.80x | **3.34k** | 46.12k | 13.58k |
 
-<sub>Excludes txns not compressible to &lt;70% of its original size.</sub>
+<sub>Excludes txs not compressible to &lt;70% of its original size.</sub>
 
 ### Compression flavors
 - **JIT calldata compiler**: Views calldata as a zero‑initialized memory image and synthesizes bytecode that rebuilds it word-by-word in-place.
