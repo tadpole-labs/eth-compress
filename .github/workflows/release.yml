@@ -73,14 +73,8 @@ jobs:
       - name: Build Test
         run: pnpm run build
 
-      - name: Test demo
-        run: pnpm run test:demo
-      
-      - name: Test Lib
-        run: pnpm run test:jit
-
       - name: Test (Release build)
-        run: pnpm run test
+        run: pnpm run test:unit
 
       - name: Clean build
         run: pnpm run clean

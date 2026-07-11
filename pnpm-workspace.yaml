@@ -1,17 +1,17 @@
 minimumReleaseAge: 1440
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true
-minimumReleaseAgeExclude:
-  - '@typescript/*'
-  - 'typescript@7.0.2'
-  - 'viem@2.55.0'
 
-verifyDepsBeforeRun: prompt
+
+verifyDepsBeforeRun: false
 verifyStoreIntegrity: true
 strictSsl: true
 strictDepBuilds: true
 ignoreScripts: true
 blockExoticSubdeps: true
+resolutionMode: time-based
+dangerouslyAllowAllBuilds: false 
+savePrefix: ''
 
 trustPolicy: no-downgrade
 
@@ -25,8 +25,6 @@ packages:
   - '!**/test/**'
 
 dedupeInjectedDeps: false
-onlyBuiltDependencies:
-  - esbuild
 
 peerDependencyRules:
   ignoreMissing:
