@@ -63,15 +63,17 @@ describe('compressModule end-to-end', () => {
     for (const tx of testData.transactions) {
       if (tx.input && tx.input.length > bigTx.input.length) bigTx = tx;
     }
-    const { from, to, input: data } = bigTx;
+    const { to, input: data } = bigTx;
+    const jitReturnFetch: FetchFn = (url, init) =>
+      u.compressModule(url, init, (p) => u.compress_call(p, 'jit', 'none'));
 
     const result = await u.retry2(() =>
-      client(u.BASE_RPC_URL, jitFetch).request({
+      client(u.BASE_RPC_URL, jitReturnFetch).request({
         method: 'eth_call',
-        params: [{ from, to, data }, '0x25F5B9C'],
+        params: [{ to, data }, 'latest'],
       }),
     );
-    assert.match(String(result), /^0x[0-9a-fA-F]*$/);
+    assert.equal(String(result).toLowerCase(), data.toLowerCase());
   });
 
   test('compress_call as HTTP transform', async () => {

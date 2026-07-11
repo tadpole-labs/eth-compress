@@ -6,11 +6,19 @@ minimumReleaseAgeExclude:
   - 'typescript@7.0.2'
   - 'viem@2.55.0'
 
+verifyDepsBeforeRun: prompt
 verifyStoreIntegrity: true
 strictSsl: true
 strictDepBuilds: true
 ignoreScripts: true
 blockExoticSubdeps: true
+
+trustPolicy: no-downgrade
+
+ignoredOptionalDependencies:
+- "@typescript/*"
+- "@esbuild/*"
+- "@biomejs/*"
 
 packages:
   - src

@@ -82,7 +82,7 @@ async function buildAll() {
   execFileSync('tsc', ['--emitDeclarationOnly', '--declaration', '--outDir', typesDir], {
     stdio: 'inherit',
   });
-  
+
   const rewriteDtsExtensions = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);

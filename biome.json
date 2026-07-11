@@ -28,7 +28,7 @@
     "enabled": true,
     "includes": ["!**/test/fixture/*.json"],
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "suspicious": {
         "noExplicitAny": "off",
         "noAssignInExpressions": "off"

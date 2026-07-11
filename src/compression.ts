@@ -115,7 +115,7 @@ export function cdCompress(data: unknown) {
     if (z) rle(0, z), (z = 0);
     pushByte(c);
   }
-  if (y) rle(1, y), (y = 0);
-  if (z) rle(0, z), (z = 0);
+  if (y) rle(1, y);
+  if (z) rle(0, z);
   return o;
 }
